@@ -39,6 +39,11 @@ fileapi = { git = "https://github.com/parthspatel/fileapi-py", rev = "master" }
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[dependency-groups]
+pydantic = [
+    "pyyaml>=6.0.2",
+]
+
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyutils"]
