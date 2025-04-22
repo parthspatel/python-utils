@@ -7,7 +7,7 @@ requires-python = ">=3.13"
 dependencies = []
 
 [project.optional-dependencies]
-logger = [
+logging = [
     "structlog>=25.2.0",
 ]
 jpath = [

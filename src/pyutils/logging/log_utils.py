@@ -47,7 +47,7 @@ class PythonLoggingInterceptHandler(logging.Handler):
     """
 
     def emit(self, record: logging.LogRecord) -> None:
-        # Retrieve the corresponding structlog logger using the record’s name.
+        # Retrieve the corresponding structlog logging using the record’s name.
         logger = structlog.get_logger(record.name)
         # Use the numeric log level from the record.
         level = record.levelno
