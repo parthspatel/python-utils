@@ -1,1 +1,1 @@
-from . import *
+from .jpath import *
