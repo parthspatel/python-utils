@@ -1093,7 +1093,7 @@ wheels = [
 
 [[package]]
 name = "pyutils"
-version = "0.5.1"
+version = "0.6.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -1104,7 +1104,7 @@ fileapi = [
 jpath = [
     { name = "jsonpath-ng" },
 ]
-logger = [
+logging = [
     { name = "structlog" },
 ]
 pydantic = [
@@ -1127,9 +1127,9 @@ requires-dist = [
     { name = "fsspec", extras = ["gs", "s3", "ssh"], marker = "extra == 'fileapi'", specifier = ">=2025.3.2" },
     { name = "jsonpath-ng", marker = "extra == 'jpath'", specifier = ">=1.7.0" },
     { name = "pydantic", marker = "extra == 'pydantic'", specifier = ">=2.11.3" },
-    { name = "structlog", marker = "extra == 'logger'", specifier = ">=25.2.0" },
+    { name = "structlog", marker = "extra == 'logging'", specifier = ">=25.2.0" },
 ]
-provides-extras = ["logger", "jpath", "pydantic", "fileapi"]
+provides-extras = ["logging", "jpath", "pydantic", "fileapi"]
 
 [package.metadata.requires-dev]
 dev = [
