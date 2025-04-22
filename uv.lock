@@ -1109,6 +1109,7 @@ logging = [
 ]
 pydantic = [
     { name = "pydantic" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -1120,9 +1121,6 @@ dev = [
     { name = "uv" },
     { name = "visidata" },
 ]
-pydantic = [
-    { name = "pyyaml" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -1130,6 +1128,7 @@ requires-dist = [
     { name = "fsspec", extras = ["gs", "s3", "ssh"], marker = "extra == 'fileapi'", specifier = ">=2025.3.2" },
     { name = "jsonpath-ng", marker = "extra == 'jpath'", specifier = ">=1.7.0" },
     { name = "pydantic", marker = "extra == 'pydantic'", specifier = ">=2.11.3" },
+    { name = "pyyaml", marker = "extra == 'pydantic'", specifier = ">=6.0.2" },
     { name = "structlog", marker = "extra == 'logging'", specifier = ">=25.2.0" },
 ]
 provides-extras = ["logging", "jpath", "pydantic", "fileapi"]
@@ -1143,7 +1142,6 @@ dev = [
     { name = "uv", specifier = ">=0.6.16" },
     { name = "visidata", specifier = ">=3.1.1" },
 ]
-pydantic = [{ name = "pyyaml", specifier = ">=6.0.2" }]
 
 [[package]]
 name = "pywin32"
