@@ -15,6 +15,7 @@ jpath = [
 ]
 pydantic = [
     "pydantic>=2.11.3",
+    "pyyaml>=6.0.2",
 ]
 fileapi = [
     "fileapi>=0.2.3",
@@ -38,11 +39,6 @@ fileapi = { git = "https://github.com/parthspatel/fileapi-py", rev = "master" }
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[dependency-groups]
-pydantic = [
-    "pyyaml>=6.0.2",
-]
 
 
 [tool.hatch.build.targets.wheel]
