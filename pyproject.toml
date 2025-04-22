@@ -1,6 +1,6 @@
 [project]
 name = "pyutils"
-version = "0.4.0"
+version = "0.4.1"
 description = "Python utilities"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -17,13 +17,6 @@ pydantic = [
     "pydantic>=2.11.3",
 ]
 fileapi = [
-    "fileapi>=0.2.3",
-    "fsspec[gs,s3,ssh]>=2025.3.2",
-]
-full = [
-    "structlog>=25.2.0",
-    "jsonpath-ng>=1.7.0",
-    "pydantic>=2.11.3",
     "fileapi>=0.2.3",
     "fsspec[gs,s3,ssh]>=2025.3.2",
 ]
