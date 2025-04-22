@@ -1,5 +1,5 @@
 [project]
-name = "utils"
+name = "pyutils"
 version = "0.2.0"
 description = "Python utilities"
 readme = "README.md"
@@ -41,7 +41,7 @@ build-backend = "hatchling.build"
 
 
 [tool.hatch.build.targets.wheel]
-packages = ["base"]
+packages = ["src"]
 
 
 [tool.pyright]
