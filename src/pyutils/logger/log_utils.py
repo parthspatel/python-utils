@@ -24,6 +24,12 @@ class _Trace:
     def __exit__(self, exc_type, exc_val, exc_tb):
         unbind_contextvars(*self.tokens)
 
+    def __aenter__(self):
+        self.tokens = bind_contextvars(**self.kwargs)
+
+    def __aexit__(self, exc_type, exc_val, exc_tb):
+        unbind_contextvars(*self.tokens)
+
 
 def trace(**kwargs):
     return _Trace(**kwargs)
@@ -35,15 +41,58 @@ def uppercase_log_level(logger, log_method, event_dict):
     return event_dict
 
 
-def configure(min_level: Union[str, int] = logging.NOTSET, pretty: Optional[bool] = None):
+class PythonLoggingInterceptHandler(logging.Handler):
+    """
+    A logging handler that intercepts standard log records and re-emits them via structlog.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # Retrieve the corresponding structlog logger using the record’s name.
+        logger = structlog.get_logger(record.name)
+        # Use the numeric log level from the record.
+        level = record.levelno
+        # Re-emit the log record’s message along with any extra context.
+        logger.log(level, record.getMessage(), **record.__dict__)
+
+
+def min_log_level_from_env(min_level):
+    env_level = os.environ.get("LOG_LEVEL", "")
+    match env_level.upper():
+        case "CRITICAL":
+            min_level = logging.CRITICAL
+        case "FATAL":
+            min_level = logging.CRITICAL
+        case "ERROR":
+            min_level = logging.ERROR
+        case "WARNING":
+            min_level = logging.WARNING
+        case "WARN":
+            min_level = logging.WARNING
+        case "INFO":
+            min_level = logging.INFO
+        case "DEBUG":
+            min_level = logging.DEBUG
+        case _:
+            min_level = logging.NOTSET
+    return min_level
+
+
+def configure(min_level: Union[str, int, None] = logging.NOTSET, pretty: Optional[bool] = None):
+    if min_level is None:
+        min_level = min_log_level_from_env(min_level)
+
     shared_processors = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.StackInfoRenderer(),
         structlog.dev.set_exc_info,
         structlog.processors.CallsiteParameterAdder(
-            parameters=[CallsiteParameter.THREAD_NAME, CallsiteParameter.MODULE, CallsiteParameter.FUNC_NAME,
-                        CallsiteParameter.LINENO]),
+            parameters=[
+                CallsiteParameter.THREAD_NAME,
+                CallsiteParameter.MODULE,
+                CallsiteParameter.FUNC_NAME,
+                CallsiteParameter.LINENO
+            ]),
         structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False),
         uppercase_log_level,
     ]
@@ -52,6 +101,11 @@ def configure(min_level: Union[str, int] = logging.NOTSET, pretty: Optional[bool
         # If pretty is set to True, use PrettyPrinter
         processors = shared_processors + [
             structlog.dev.ConsoleRenderer(colors=True, sort_keys=True),
+        ]
+    if pretty is not None and not pretty:
+        processors = shared_processors + [
+            structlog.processors.dict_tracebacks,
+            structlog.processors.JSONRenderer(),
         ]
     else:
         # Check if stderr is a TTY (terminal)
@@ -103,4 +157,12 @@ def configure(min_level: Union[str, int] = logging.NOTSET, pretty: Optional[bool
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=False
+    )
+
+    logging.basicConfig(
+        force=True,
+        level=min_level,
+        handlers=[
+            PythonLoggingInterceptHandler()
+        ]
     )
