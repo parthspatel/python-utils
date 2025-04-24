@@ -18,7 +18,7 @@ pydantic = [
     "pyyaml>=6.0.2",
 ]
 fileapi = [
-    "fileapi>=0.3.0",
+    "fileapi>=0.2.3",
     "fsspec[gs,s3,ssh]>=2025.3.2",
 ]
 
