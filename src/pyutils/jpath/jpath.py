@@ -74,11 +74,18 @@ class JPath(BaseModel):
         super().__init__(**kwargs)
         self.__expression = parse(self.expression)
 
+    def __call__(self, this_dict: dict):
+        """Apply the JPath expression to a dictionary."""
+        return self.apply(this_dict)
+
+
     def apply(self, this_dict: dict) -> list[jsonpath.DatumInContext]:
+        """Apply the JPath expression to a dictionary."""
         res = self.__expression.find(this_dict)
         return res
 
     def apply_expression(self, this_dict: dict) -> _TResult:
+        """Apply the JPath expression and then the stored lambda to the dictionary."""
         res_list: list[DatumInContext] = self.apply(this_dict)
         if self.fx is None:
             return res_list
@@ -87,6 +94,7 @@ class JPath(BaseModel):
             return res_expr
 
     def get_jpath_expression(self) -> jsonpath.JSONPath:
+        """Get the internal JPath expression."""
         return self.__expression
 
     @field_serializer("fx")
@@ -103,6 +111,22 @@ class JPath(BaseModel):
         kwargs["exclude_none"] = True
         return super().model_dump_json(*args, **kwargs)
 
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        import pydantic_core
+
+        def string_to_jpath(val, _handler):
+            if isinstance(val, str):
+                try:
+                    return cls(expression=val)
+                except Exception as e:
+                    raise ValueError(f"Failed to parse JPath expr from string '{val}': {e}")
+            return _handler(val)
+
+        return pydantic_core.core_schema.no_info_wrap_validator_function(
+            string_to_jpath,
+            handler(cls)
+        )
 
 def serialize_callable(cb: Callable) -> str:
     raw_bytes = cloudpickle.dumps(cb)
@@ -190,6 +214,23 @@ def main():
     jpath_3 = JPath.model_validate(jpath_dict_3)
     print(jpath_3.to_dict())
     print(jpath_3.apply_expression(data))
+
+    print("=" * 20)
+
+    jpath_4 = JPath.model_validate("$.store.book[*].author")
+    print(jpath_4.to_dict())
+    print(jpath_4.apply(data))
+
+    print("=" * 20)
+
+    class Foo(BaseModel):
+        jpath: JPath
+
+    foo_dict = {
+        "jpath": "$.store.book[*].author"
+    }
+    foo_foo = Foo.model_validate(foo_dict)
+    print(foo_foo.to_dict())
 
 
 if __name__ == '__main__':
