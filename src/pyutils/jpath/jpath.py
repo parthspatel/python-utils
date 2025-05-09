@@ -167,12 +167,6 @@ def deserialize_callable(data: str) -> Callable:
     except Exception as e:
         raise ValueError(f"Could not parse function: {e}")
 
-    # def __repr__(self):
-    #     return self.to_dict()
-    #
-    # def __str__(self):
-    #     return self.expression
-
 def main():
     # Example usage
     jpath = JPath(expression="$.store.book[*].author")
