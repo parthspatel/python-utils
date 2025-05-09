@@ -12,7 +12,7 @@ from pyutils.pydantic import BaseModel
 
 _TResult = TypeVar("_TResult")
 
-class PyFunc:
+class PyFunc(Callable):
     """Wraps conversion of strings (lambda/def/base64) to callables for Pydantic field validation."""
     def __init__(self, func: Callable):
         super().__init__()
@@ -127,6 +127,13 @@ class JPath(BaseModel):
                 except Exception as e:
                     raise ValueError(f"Failed to parse JPath expr from string '{val}': {e}")
             return _handler(val)
+
+        def callable_to_pyfunc(val, _handler):
+            if isinstance(val, PyFunc):
+                return val
+            if callable(val):
+                return PyFunc(val)
+            raise TypeError("Value must be callable or a PyFunc instance.")
 
         return pydantic_core.core_schema.no_info_wrap_validator_function(
             string_to_jpath,
