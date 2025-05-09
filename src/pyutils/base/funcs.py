@@ -334,7 +334,7 @@ class _Pipe(Function):
     """
     functions: List[Function]
 
-    def __init__(self, functions: List[Function] | Function, *args, **kwargs) -> None:
+    def __init__(self, functions: List[Function] | Function | Callable | Any, *args, **kwargs) -> None:
         if functions is not None:
             if not isinstance(functions, list):
                 functions = [functions]
