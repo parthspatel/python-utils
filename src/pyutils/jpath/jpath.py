@@ -8,12 +8,15 @@ from jsonpath_ng import DatumInContext, jsonpath
 from jsonpath_ng.ext import parse
 from pydantic import Field, field_serializer, field_validator, ConfigDict
 
+from pyutils.base import funcs
 from pyutils.pydantic import BaseModel
 
 _TResult = TypeVar("_TResult")
 
+
 class PyFunc(Callable):
     """Wraps conversion of strings (lambda/def/base64) to callables for Pydantic field validation."""
+
     def __init__(self, func: Callable):
         super().__init__()
         if not callable(func):
@@ -48,6 +51,7 @@ class PyFunc(Callable):
                         return cls(func_objs[0])
                     raise ValueError("String could not be parsed as a callable.")
             raise TypeError("Value must be a callable or a supported string.")
+
         return pydantic_core.core_schema.no_info_plain_validator_function(validate_pyfunc)
 
     def __repr__(self):
@@ -58,6 +62,7 @@ class PyFunc(Callable):
         if isinstance(other, PyFunc):
             return repr(self.func) == repr(other.func)
         return False
+
 
 class JPath(BaseModel):
     expression: str = Field(
@@ -82,7 +87,6 @@ class JPath(BaseModel):
     def __call__(self, this_dict: dict):
         """Apply the JPath expression to a dictionary."""
         return self.apply(this_dict)
-
 
     def apply(self, this_dict: dict) -> list[jsonpath.DatumInContext]:
         """Apply the JPath expression to a dictionary."""
@@ -140,6 +144,11 @@ class JPath(BaseModel):
             handler(cls)
         )
 
+
+jpath_value = funcs.map(lambda x: x.value)
+jpath_value_list = funcs.map_list(lambda x: x.value)
+
+
 def serialize_callable(cb: Callable) -> str:
     raw_bytes = cloudpickle.dumps(cb)
     return base64.b64encode(raw_bytes).decode()
@@ -173,6 +182,7 @@ def deserialize_callable(data: str) -> Callable:
             raise ValueError("Unsupported function source code format.")
     except Exception as e:
         raise ValueError(f"Could not parse function: {e}")
+
 
 def main():
     # Example usage
@@ -209,7 +219,6 @@ def main():
     print(jpath_dict2)
     print(jpath_dict == jpath_dict2)
 
-
     print("=" * 20)
 
     jpath_dict_3 = {
@@ -238,14 +247,14 @@ def main():
     foo_foo = Foo.model_validate(foo_dict)
     print(foo_foo.to_dict())
 
-    print("="*20)
+    print("=" * 20)
     jpath_5 = JPath("$.store.book[*].author")
     print(jpath_5)
-
 
     # print("="*20)
     # jpath_6 = JPath("$.store.book[*].author")
     # print(json.dumps(jpath_6, indent=2))
+
 
 if __name__ == '__main__':
     main()
