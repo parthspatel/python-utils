@@ -244,6 +244,30 @@ class _Reduce(Function):
         return result
 
 
+class _Init(Function):
+    """
+    Calls __init__ on a provided class to instantiate it.
+    Useful for use in functional pipelines, map, etc.
+    """
+    class_: type
+    init_args: Optional[tuple] = ()
+    init_kwargs: Optional[dict] = None
+
+    def __init__(self, class_, init_args=None, init_kwargs=None, **kwargs):
+        kwargs["class_"] = class_
+        kwargs["init_args"] = tuple() if init_args is None else tuple(init_args)
+        kwargs["init_kwargs"] = {} if init_kwargs is None else dict(init_kwargs)
+        super().__init__(**kwargs)
+
+    def __call__(self, *args, **kwargs):
+        # If args or kwargs are provided during call, use them (for map-like use over data)
+        # Otherwise use the stored args/kwargs
+        if args or kwargs:
+            return self.class_(*args, **kwargs)
+        else:
+            return self.class_(*self.init_args, **self.init_kwargs)
+
+
 class Try(Function):
     """
     A class that represents the try function, which attempts to apply a function and returns the exception if it fails.
@@ -413,6 +437,7 @@ map_list = _MapList
 flat_map = _FlatMap
 filter = _Filter
 reduce = _Reduce
+init = _Init
 pipe = _Pipe
 future = _AsyncFunction
 apipe = _AsyncSeq
