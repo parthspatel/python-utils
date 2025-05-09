@@ -64,7 +64,7 @@ class JPath(BaseModel):
         ...,
         description="The Json Path expression to apply"
     )
-    fx: Optional[PyFunc] = Field(
+    fx: Optional[PyFunc | Callable] = Field(
         default=None,
         description="A function to apply to the result of the expression.  During serde, this is serialized with cloudpickle and base64 encoded.",
     )
