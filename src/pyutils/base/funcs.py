@@ -1,7 +1,7 @@
 import abc
 import asyncio
 import enum
-from typing import List, TypeVar, Callable, Optional
+from typing import List, TypeVar, Callable, Optional, Self
 
 from pydantic import Field, field_validator
 
@@ -20,10 +20,10 @@ class Function(BaseModel, Callable, abc.ABC):
         """
         raise NotImplementedError("Subclasses must implement this method.")
 
-    def __le__(self, other) -> '_Pipe':
+    def prepend(self, other: "Function") -> "_Pipe":
         return pipe(functions=[other, self])
 
-    def __ge__(self, other) -> '_Pipe':
+    def append(self, other: "Function") -> "_Pipe":
         return pipe(functions=[self, other])
 
 
@@ -139,10 +139,10 @@ class _AssertQuantity(Function):
     """
     A class that represents the assert_quantity function, which asserts that the length of a list is equal to a given number.
     """
-    op: UnaryOps | str = Field(UnaryOps.EQ, description="The operator to use for the assertion.")
+    op: UnaryOps = Field(UnaryOps.EQ, description="The operator to use for the assertion.")
     n: int
 
-    def __init__(self, op, n, **kwargs):
+    def __init__(self, op: UnaryOps | str, n, **kwargs):
         if op is not None:
             if isinstance(op, str):
                 op = UnaryOps.from_string(op)
@@ -212,7 +212,26 @@ class _Filter(Function):
     A class that represents the filter function, which filters elements in a list based on a predicate function.
     """
 
-    func: Callable[[List[_TInput1]], bool]
+    func: Callable[[_TInput1], bool]
+
+    def __init__(self, func, **kwargs) -> None:
+        if func is not None:
+            kwargs["func"] = func
+        super().__init__(**kwargs)
+
+    def __call__(self, data: _TInput1) -> _TInput1:
+        if self.func(data):
+            return data
+        else:
+            return None
+
+
+class _FilterList(Function):
+    """
+    A class that represents the filter function, which filters elements in a list based on a predicate function.
+    """
+
+    func: Callable[[_TInput1], bool]
 
     def __init__(self, func, **kwargs) -> None:
         if func is not None:
@@ -268,7 +287,7 @@ class _Init(Function):
             return self.class_(*self.init_args, **self.init_kwargs)
 
 
-class Try(Function):
+class _Attempt(Function):
     """
     A class that represents the try function, which attempts to apply a function and returns the exception if it fails.
     It should have an optional function to handle the exception.
@@ -285,7 +304,7 @@ class Try(Function):
 
     @classmethod
     def as_optional(cls, func: Callable[[_TInput1], _TResult],
-                    ex_handler: Optional[Callable[[Exception], _TResult]] = None) -> 'Try':
+                    ex_handler: Optional[Callable[[Exception], _TResult]] = None) -> '_Attempt':
         """
         Creates a Try instance that returns None if the function raises an exception.
         """
@@ -300,7 +319,8 @@ class Try(Function):
 
     def __call__(self, data: _TInput1) -> _TResult:
         try:
-            return self.func(data)
+            result = self.func(data)
+            return result
         except Exception as e:
             if self.ex_handler is not None:
                 return self.ex_handler(e)
@@ -314,15 +334,32 @@ class _Pipe(Function):
     """
     functions: List[Function]
 
-    def __init__(self, functions, **kwargs) -> None:
+    def __init__(self, functions: List[Function] | Function, *args, **kwargs) -> None:
         if functions is not None:
+            if not isinstance(functions, list):
+                functions = [functions]
             kwargs["functions"] = functions
+        if args:
+            funcs = kwargs["functions"] if kwargs["functions"] else []
+            funcs.extend(args)
+            kwargs["functions"] = funcs
         super().__init__(**kwargs)
 
     def __call__(self, data: List[_TInput1]) -> _TResult:
+        intermediate = data
         for func in self.functions:
-            data = func(data)
-        return data
+            intermediate = func(intermediate)
+        return intermediate
+
+    def prepend(self, other: Function) -> Self:
+        new_list = [other]
+        new_list.extend(self.functions)
+        self.functions = new_list
+        return self
+
+    def append(self, other: Function) -> Self:
+        self.functions.append(other)
+        return self
 
 
 class _AsyncFunctionABC(Function, abc.ABC):
@@ -330,26 +367,20 @@ class _AsyncFunctionABC(Function, abc.ABC):
     async def __call__(self, *args, **kwargs) -> _TResult:
         raise NotImplementedError("Subclasses must implement this method.")
 
-    def __le__(self, other):
+    def prepend(self, other):
         return _AsyncSeq(functions=[other, self])
 
-    def __ge__(self, other):
+    def append(self, other):
         return _AsyncSeq(functions=[self, other])
 
-    def __and__(self, other):
+    def gather(self, other):
         return _AsyncGather(functions=[self, other])
 
-    def and_(self, other):
-        return _AsyncGather(functions=[self, other])
-
-    def __or__(self, other):
-        return _AsyncRace(functions=[self, other])
-
-    def or_(self, other):
+    def race(self, other):
         return _AsyncRace(functions=[self, other])
 
 
-class _AsyncFunction(Function):
+class _AsyncFunction(_AsyncFunctionABC):
     """
     A class that represents an asynchronous function adapter.
     Wraps a synchronous or asynchronous function; always executes as async.
@@ -377,7 +408,7 @@ class _AsyncFunction(Function):
             return await __run__()
 
 
-class _AsyncSeq(Function):
+class _AsyncSeq(_AsyncFunctionABC):
     """
     A class that represents the async seq function, which chains multiple asynchronous functions together.
     """
@@ -393,8 +424,18 @@ class _AsyncSeq(Function):
             data = await func(data)
         return data
 
+    def prepend(self, other: Function) -> Self:
+        new_list = [other]
+        new_list.extend(self.functions)
+        self.functions = new_list
+        return self
 
-class _AsyncGather(Function):
+    def append(self, other: Function) -> Self:
+        self.functions.append(other)
+        return self
+
+
+class _AsyncGather(_AsyncFunctionABC):
     """
     A class that represents the async join function, which joins multiple asynchronous functions together.
     """
@@ -409,8 +450,12 @@ class _AsyncGather(Function):
         tasks = [func(data) for func in self.functions]
         return await asyncio.gather(*tasks)
 
+    def gather(self, other):
+        self.functions.append(other)
+        return self
 
-class _AsyncRace(Function):
+
+class _AsyncRace(_AsyncFunctionABC):
     """
     A class that represents the async race to the first function that returns.
     """
@@ -425,6 +470,10 @@ class _AsyncRace(Function):
         tasks = [func(data) for func in self.functions]
         return await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
 
+    def race(self, other):
+        self.functions.append(other)
+        return self
+
 
 # Aliases for convenience
 head = _Head
@@ -436,8 +485,10 @@ map = _Map
 map_list = _MapList
 flat_map = _FlatMap
 filter = _Filter
+filter_list = _FilterList
 reduce = _Reduce
 init = _Init
+attempt = _Attempt
 pipe = _Pipe
 future = _AsyncFunction
 apipe = _AsyncSeq
@@ -448,18 +499,36 @@ race = _AsyncRace
 def _main():
     # Example usage of the classes
     data = [1, 2, 3, 4, 5]
+    print("Initial data:", data)
 
-    # Create a pipe with functions
+    # print intermediate results
+    mapped = map_list(lambda x: x * 2)(data)
+    print("After map_list:", mapped)
 
-    pipeline = Try.as_optional(
-        map_list(lambda x: x * 2) +
-        filter(lambda x: x > 5) +
-        assert_quantity(">", 2)
+    filtered = filter_list(lambda x: x > 5)(mapped)
+    print("After filter:", filtered)
+
+    checked = assert_quantity(UnaryOps.GE, 2)(filtered)
+    print("After assert_quantity:", checked)
+
+    print(
+        "Partial Pipeline: ",
+        attempt(
+            map_list(lambda x: x * 2)
+            .append(filter_list(lambda x: x > 5))
+        )(data)
     )
 
-    # Apply the pipeline to the data
-    result = pipeline(data)
-    print(result)  # Output: [6, 8, 10]
+    print(
+        "Full Pipeline: ",
+        attempt(
+            pipe(
+                map_list(lambda x: x * 2),
+                filter_list(lambda x: x > 5),
+                assert_quantity(UnaryOps.GE, 2)
+            )
+        )(data)
+    )
 
 
 if __name__ == "__main__":
