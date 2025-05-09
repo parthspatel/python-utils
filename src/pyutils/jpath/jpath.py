@@ -8,7 +8,7 @@ from jsonpath_ng import DatumInContext, jsonpath
 from jsonpath_ng.ext import parse
 from pydantic import Field, field_serializer, field_validator, ConfigDict
 
-from src.pyutils.pydantic import BaseModel
+from pyutils.pydantic import BaseModel
 
 _TResult = TypeVar("_TResult")
 
