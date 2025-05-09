@@ -20,40 +20,11 @@ class Function(BaseModel, abc.ABC):
         """
         raise NotImplementedError("Subclasses must implement this method.")
 
-    def __add__(self, other) -> '_Pipe':
+    def __le__(self, other) -> '_Pipe':
+        return pipe(functions=[other, self])
+
+    def __ge__(self, other) -> '_Pipe':
         return pipe(functions=[self, other])
-
-
-class _AsyncFunction(Function):
-    """
-    A class that represents an asynchronous function adapter.
-    Wraps a synchronous or asynchronous function; always executes as async.
-    """
-
-    func: Callable
-
-    def __init__(self, func, **kwargs):
-        if func is not None:
-            kwargs["func"] = func
-        super().__init__(**kwargs)
-        # Inspect whether it's async/awaitable
-        self._is_async = asyncio.iscoroutinefunction(self.func)
-
-    async def __call__(self, *args, **kwargs):
-        """
-        Awaits asynchronous functions, calls synchronous functions in a thread.
-        """
-        if self._is_async:
-            return await self.func(*args, **kwargs)
-        else:
-            async def __run__():
-                return self.func(*args, **kwargs)
-
-            return await __run__()
-
-            # # Run synchronous function in default event loop executor
-            # loop = asyncio.get_event_loop()
-            # return await loop.run_in_executor(None, lambda: self.func(*args, **kwargs))
 
 
 class _Head(Function):
@@ -273,23 +244,6 @@ class _Reduce(Function):
         return result
 
 
-class _Pipe(Function):
-    """
-    A class that represents the pipe function, which chains multiple functions together.
-    """
-    functions: List[Function]
-
-    def __init__(self, functions, **kwargs) -> None:
-        if functions is not None:
-            kwargs["functions"] = functions
-        super().__init__(**kwargs)
-
-    def __call__(self, data: List[_TInput1]) -> _TResult:
-        for func in self.functions:
-            data = func(data)
-        return data
-
-
 class Try(Function):
     """
     A class that represents the try function, which attempts to apply a function and returns the exception if it fails.
@@ -330,6 +284,124 @@ class Try(Function):
                 raise e
 
 
+class _Pipe(Function):
+    """
+    A class that represents the pipe function, which chains multiple functions together.
+    """
+    functions: List[Function]
+
+    def __init__(self, functions, **kwargs) -> None:
+        if functions is not None:
+            kwargs["functions"] = functions
+        super().__init__(**kwargs)
+
+    def __call__(self, data: List[_TInput1]) -> _TResult:
+        for func in self.functions:
+            data = func(data)
+        return data
+
+
+class _AsyncFunctionABC(Function, abc.ABC):
+    @abc.abstractmethod
+    async def __call__(self, *args, **kwargs) -> _TResult:
+        raise NotImplementedError("Subclasses must implement this method.")
+
+    def __le__(self, other):
+        return _AsyncSeq(functions=[other, self])
+
+    def __ge__(self, other):
+        return _AsyncSeq(functions=[self, other])
+
+    def __and__(self, other):
+        return _AsyncGather(functions=[self, other])
+
+    def and_(self, other):
+        return _AsyncGather(functions=[self, other])
+
+    def __or__(self, other):
+        return _AsyncRace(functions=[self, other])
+
+    def or_(self, other):
+        return _AsyncRace(functions=[self, other])
+
+
+class _AsyncFunction(Function):
+    """
+    A class that represents an asynchronous function adapter.
+    Wraps a synchronous or asynchronous function; always executes as async.
+    """
+
+    func: Callable
+
+    def __init__(self, func, **kwargs):
+        if func is not None:
+            kwargs["func"] = func
+        super().__init__(**kwargs)
+        # Inspect whether it's async/awaitable
+        self._is_async = asyncio.iscoroutinefunction(self.func)
+
+    async def __call__(self, *args, **kwargs):
+        """
+        Awaits asynchronous functions, calls synchronous functions in a thread.
+        """
+        if self._is_async:
+            return await self.func(*args, **kwargs)
+        else:
+            async def __run__():
+                return self.func(*args, **kwargs)
+
+            return await __run__()
+
+
+class _AsyncSeq(Function):
+    """
+    A class that represents the async seq function, which chains multiple asynchronous functions together.
+    """
+    functions: List[Function]
+
+    def __init__(self, functions, **kwargs) -> None:
+        if functions is not None:
+            kwargs["functions"] = functions
+        super().__init__(**kwargs)
+
+    async def __call__(self, data: List[_TInput1]) -> _TResult:
+        for func in self.functions:
+            data = await func(data)
+        return data
+
+
+class _AsyncGather(Function):
+    """
+    A class that represents the async join function, which joins multiple asynchronous functions together.
+    """
+    functions: List[Function]
+
+    def __init__(self, functions, **kwargs) -> None:
+        if functions is not None:
+            kwargs["functions"] = functions
+        super().__init__(**kwargs)
+
+    async def __call__(self, data: List[_TInput1]) -> _TResult:
+        tasks = [func(data) for func in self.functions]
+        return await asyncio.gather(*tasks)
+
+
+class _AsyncRace(Function):
+    """
+    A class that represents the async race to the first function that returns.
+    """
+    functions: List[Function]
+
+    def __init__(self, functions, **kwargs) -> None:
+        if functions is not None:
+            kwargs["functions"] = functions
+        super().__init__(**kwargs)
+
+    async def __call__(self, data: List[_TInput1]) -> _TResult:
+        tasks = [func(data) for func in self.functions]
+        return await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+
 # Aliases for convenience
 head = _Head
 tail = _Tail
@@ -343,6 +415,9 @@ filter = _Filter
 reduce = _Reduce
 pipe = _Pipe
 future = _AsyncFunction
+apipe = _AsyncSeq
+gather = _AsyncGather
+race = _AsyncRace
 
 
 def _main():

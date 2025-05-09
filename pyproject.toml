@@ -1,6 +1,6 @@
 [project]
 name = "pyutils"
-version = "0.10.0"
+version = "0.10.1"
 description = "Python utilities"
 readme = "README.md"
 requires-python = ">=3.13"
