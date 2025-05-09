@@ -70,7 +70,11 @@ class JPath(BaseModel):
 
     # model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, **kwargs):
+    def __init__(self, expression, fx=None, **kwargs):
+        if expression is not None:
+            kwargs['expression'] = expression
+        if fx is not None:
+            kwargs['fx'] = fx
         super().__init__(**kwargs)
         self.__expression = parse(self.expression)
 
@@ -168,7 +172,7 @@ def deserialize_callable(data: str) -> Callable:
     # def __str__(self):
     #     return self.expression
 
-def main():
+def tests():
     # Example usage
     jpath = JPath(expression="$.store.book[*].author")
     data = {
@@ -232,6 +236,9 @@ def main():
     foo_foo = Foo.model_validate(foo_dict)
     print(foo_foo.to_dict())
 
+    print("="*20)
+    jpath_5 = JPath("$.store.book[*].author")
+    print(jpath_5)
 
 if __name__ == '__main__':
-    main()
+    tests()
