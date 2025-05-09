@@ -11,7 +11,7 @@ _TInput1 = TypeVar("_TInput1")
 _TResult = TypeVar("_TResult")
 
 
-class Function(BaseModel, abc.ABC):
+class Function(BaseModel, Callable, abc.ABC):
 
     @abc.abstractmethod
     def __call__(self, data: _TInput1) -> _TResult:
