@@ -1,6 +1,6 @@
 [project]
 name = "pyutils"
-version = "0.8.0"
+version = "0.8.1"
 description = "Python utilities"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -14,22 +14,22 @@ dependencies = [
     "cloudpickle>=3.1.1",
 ]
 
-#[project.optional-dependencies]
-#logging = [
-#    "structlog>=25.2.0",
-#]
-#jpath = [
-#    "pydantic>=2.11.3",
-#    "jsonpath-ng>=1.7.0",
-#]
-#pydantic = [
-#    "pydantic>=2.11.3",
-#    "pyyaml>=6.0.2",
-#]
-#fileapi = [
-#    "fileapi>=0.2.3",
-#    "fsspec[gs,s3,ssh]>=2025.3.2",
-#]
+[project.optional-dependencies]
+logging = [
+    "structlog>=25.2.0",
+]
+jpath = [
+    "pydantic>=2.11.3",
+    "jsonpath-ng>=1.7.0",
+]
+pydantic = [
+    "pydantic>=2.11.3",
+    "pyyaml>=6.0.2",
+]
+fileapi = [
+    "fileapi>=0.2.3",
+    "fsspec[gs,s3,ssh]>=2025.3.2",
+]
 
 [tool.uv]
 dev-dependencies = [
