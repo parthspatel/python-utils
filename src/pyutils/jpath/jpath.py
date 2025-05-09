@@ -15,6 +15,7 @@ _TResult = TypeVar("_TResult")
 class PyFunc:
     """Wraps conversion of strings (lambda/def/base64) to callables for Pydantic field validation."""
     def __init__(self, func: Callable):
+        super().__init__()
         if not callable(func):
             raise TypeError("Value must be callable")
         self.func = func
@@ -172,7 +173,7 @@ def deserialize_callable(data: str) -> Callable:
     # def __str__(self):
     #     return self.expression
 
-def tests():
+def main():
     # Example usage
     jpath = JPath(expression="$.store.book[*].author")
     data = {
@@ -240,5 +241,10 @@ def tests():
     jpath_5 = JPath("$.store.book[*].author")
     print(jpath_5)
 
+
+    # print("="*20)
+    # jpath_6 = JPath("$.store.book[*].author")
+    # print(json.dumps(jpath_6, indent=2))
+
 if __name__ == '__main__':
-    tests()
+    main()
