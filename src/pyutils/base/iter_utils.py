@@ -15,14 +15,24 @@ def flatmap(func, *iterable):
     return itertools.chain.from_iterable(map(func, *iterable))
 
 
-def groupby(iterable, key_fx, sort: bool = True) -> Dict[_TResult, List[_TResult]]:
+def groupby(iterable, key_fx, sort: bool = True, inner_sort_fx: Optional[Callable] = None) -> Dict[_TResult, List[_TResult]]:
     if sort:
         iterable.sort(key=key_fx)
-    return {k: list(v) for k, v in itertools.groupby(iterable, key_fx)}
+
+    if inner_sort_fx:
+        def __inner(v: iterable) -> list:
+            data = list(v)
+            data.sort(key=inner_sort_fx)
+            return data
+    else:
+        def __inner(v: iterable) -> list:
+            return list(v)
+
+    return {k: __inner(v) for k, v in itertools.groupby(iterable, key_fx)}
 
 
-def groupbylist(iterable: object, key_fx: object, sort: bool = True) -> Dict[_TResult, List[_TResult]]:
-    return groupby(iterable, key_fx, sort)
+def groupbylist(iterable: object, key_fx: object, sort: bool = True, inner_sort_fx: Optional[Callable] = None) -> Dict[_TResult, List[_TResult]]:
+    return groupby(iterable, key_fx, sort, inner_sort_fx)
 
 
 def groupbyset(iterable, key_fx, sort: bool = True) -> Dict[_TResult, Set[_TResult]]:
