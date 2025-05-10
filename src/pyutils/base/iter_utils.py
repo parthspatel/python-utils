@@ -15,8 +15,8 @@ def flatmap(func, *iterable):
     return itertools.chain.from_iterable(map(func, *iterable))
 
 
-def groupby(iterable, key_fx, sort: bool = True, inner_sort_fx: Optional[Callable] = None) -> Dict[_TResult, List[_TResult]]:
-    if sort:
+def groupby(iterable, key_fx, sort_keys: bool = True, inner_sort_fx: Optional[Callable] = None) -> Dict[_TResult, List[_TResult]]:
+    if sort_keys:
         iterable.sort(key=key_fx)
 
     if inner_sort_fx:
@@ -31,8 +31,8 @@ def groupby(iterable, key_fx, sort: bool = True, inner_sort_fx: Optional[Callabl
     return {k: __inner(v) for k, v in itertools.groupby(iterable, key_fx)}
 
 
-def groupbylist(iterable: object, key_fx: object, sort: bool = True, inner_sort_fx: Optional[Callable] = None) -> Dict[_TResult, List[_TResult]]:
-    return groupby(iterable, key_fx, sort, inner_sort_fx)
+def groupbylist(iterable: object, key_fx: object, sort_keys: bool = True, inner_sort_fx: Optional[Callable] = None) -> Dict[_TResult, List[_TResult]]:
+    return groupby(iterable, key_fx, sort_keys, inner_sort_fx)
 
 
 def groupbyset(iterable, key_fx, sort: bool = True) -> Dict[_TResult, Set[_TResult]]:
