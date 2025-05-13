@@ -1,14 +1,15 @@
 import base64
 import json
 from collections.abc import Callable
-from typing import TypeVar, Optional, Union
+from typing import TypeVar, Optional
 
 import cloudpickle
 from jsonpath_ng import DatumInContext, jsonpath
 from jsonpath_ng.ext import parse
-from pydantic import Field, field_serializer, field_validator, ConfigDict
+from pydantic import Field, field_serializer
 
 from pyutils.base import funcs
+from pyutils.base.funcs import serialize_callable
 from pyutils.pydantic import BaseModel
 
 _TResult = TypeVar("_TResult")
@@ -147,41 +148,6 @@ class JPath(BaseModel):
 
 jpath_value = funcs.map(lambda x: x.value)
 jpath_value_list = funcs.map_list(lambda x: x.value)
-
-
-def serialize_callable(cb: Callable) -> str:
-    raw_bytes = cloudpickle.dumps(cb)
-    return base64.b64encode(raw_bytes).decode()
-
-
-def deserialize_callable(data: str) -> Callable:
-    # Try base64 decode first
-    try:
-        raw_bytes = base64.b64decode(data.encode())
-        return cloudpickle.loads(raw_bytes)
-    except Exception:
-        pass  # Not base64? try as source code
-
-    import ast
-
-    # Try to evaluate as a lambda, or exec as a function def
-    # very simple and unsafe version!
-    try:
-        if data.strip().startswith("lambda"):
-            # Evaluate the lambda
-            return eval(data, {"DatumInContext": DatumInContext})
-        elif data.strip().startswith("def "):
-            local_namespace = {}
-            exec(data, {"DatumInContext": DatumInContext}, local_namespace)
-            # Return the first function defined in locals
-            funcs = [val for val in local_namespace.values() if callable(val)]
-            if not funcs:
-                raise ValueError("No function definition found.")
-            return funcs[0]
-        else:
-            raise ValueError("Unsupported function source code format.")
-    except Exception as e:
-        raise ValueError(f"Could not parse function: {e}")
 
 
 def main():
