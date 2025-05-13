@@ -1,8 +1,11 @@
 import abc
 import asyncio
+import base64
 import enum
 from typing import List, TypeVar, Callable, Optional, Self, Any
 
+import cloudpickle
+from jsonpath_ng import DatumInContext
 from pydantic import Field, field_validator
 
 from pyutils.pydantic import BaseModel
@@ -533,3 +536,38 @@ def _main():
 
 if __name__ == "__main__":
     asyncio.run(future(_main)())
+
+
+def serialize_callable(cb: Callable) -> str:
+    raw_bytes = cloudpickle.dumps(cb)
+    return base64.b64encode(raw_bytes).decode()
+
+
+def deserialize_callable(data: str) -> Callable:
+    # Try base64 decode first
+    try:
+        raw_bytes = base64.b64decode(data.encode())
+        return cloudpickle.loads(raw_bytes)
+    except Exception:
+        pass  # Not base64? try as source code
+
+    import ast
+
+    # Try to evaluate as a lambda, or exec as a function def
+    # very simple and unsafe version!
+    try:
+        if data.strip().startswith("lambda"):
+            # Evaluate the lambda
+            return eval(data, {"DatumInContext": DatumInContext})
+        elif data.strip().startswith("def "):
+            local_namespace = {}
+            exec(data, {"DatumInContext": DatumInContext}, local_namespace)
+            # Return the first function defined in locals
+            funcs = [val for val in local_namespace.values() if callable(val)]
+            if not funcs:
+                raise ValueError("No function definition found.")
+            return funcs[0]
+        else:
+            raise ValueError("Unsupported function source code format.")
+    except Exception as e:
+        raise ValueError(f"Could not parse function: {e}")
