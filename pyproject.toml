@@ -1,22 +1,26 @@
 [project]
 name = "pyutils"
-version = "0.10.6"
+version = "0.11.0"
 description = "Python utilities"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "structlog>=25.2.0",
-    "pydantic>=2.11.3",
-    "jsonpath-ng>=1.7.0",
-    "pyyaml>=6.0.2",
-    "fileapi>=0.2.3",
-    "fsspec[gs,s3,ssh]>=2025.3.2",
     "cloudpickle>=3.1.1",
+    "structlog>=25.2.0",
+    "psutil>=7.0.0",
+    "pydantic>=2.11.3",
+    "pyyaml>=6.0.2",
+    "jsonpath-ng>=1.7.0",
+    "fsspec>=2025.3.2",
 ]
 
 [project.optional-dependencies]
+core = [
+    "cloudpickle>=3.1.1",
+]
 logging = [
     "structlog>=25.2.0",
+    "psutil>=7.0.0",
 ]
 jpath = [
     "pydantic>=2.11.3",
@@ -27,8 +31,8 @@ pydantic = [
     "pyyaml>=6.0.2",
 ]
 fileapi = [
-    "fileapi>=0.2.3",
-    "fsspec[gs,s3,ssh]>=2025.3.2",
+    "fsspec>=2025.5.1",
+    "pydantic>=2.11.5",
 ]
 
 [tool.uv]
@@ -39,11 +43,8 @@ dev-dependencies = [
     "ruff>=0.11.6",
     "uv>=0.6.16",
     "visidata>=3.1.1",
+    "gcsfs>=2025.5.1", # for fileapi
 ]
-
-[tool.uv.sources]
-fileapi = { git = "https://github.com/parthspatel/fileapi-py", rev = "master" }
-
 
 [build-system]
 requires = ["hatchling"]
@@ -60,15 +61,58 @@ venv = ".venv"
 
 
 [tool.ruff]
+target-version = "py313"
 line-length = 120
 indent-width = 4
-
+fix = true
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "tab"
 docstring-code-format = true
 skip-magic-trailing-comma = false
+
+
+[tool.ruff.lint]
+select = [
+    # flake8-2020
+    "YTT",
+    # flake8-bandit
+    "S",
+    # flake8-bugbear
+    "B",
+    # flake8-builtins
+    "A",
+    # flake8-comprehensions
+    "C4",
+    # flake8-debugger
+    "T10",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # mccabe
+    "C90",
+    # pycodestyle
+    "E", "W",
+    # pyflakes
+    "F",
+    # pygrep-hooks
+    "PGH",
+    # pyupgrade
+    "UP",
+    # ruff
+    "RUF",
+    # tryceratops
+    "TRY",
+]
+
+ignore = [
+    # LineTooLong
+    "E501",
+    # DoNotAssignLambda
+    "E731",
+]
 
 
 [tool.ruff.lint.isort]

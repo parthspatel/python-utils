@@ -1,4 +1,3 @@
-import contextlib
 import logging
 import os
 import sys
@@ -9,7 +8,13 @@ import psutil
 import structlog
 from structlog.contextvars import bind_contextvars, unbind_contextvars
 from structlog.processors import CallsiteParameter
+from structlog.typing import FilteringBoundLogger
 
+_AnyLogger = FilteringBoundLogger | structlog.stdlib.AsyncBoundLogger | Any
+
+# noinspection PyPep8Naming
+def getLogger(*args: Any, **initial_values: Any) -> _AnyLogger:
+    return structlog.get_logger(*args, **initial_values)
 
 class _Trace:
     tokens: Mapping[str, Token[Any]]
@@ -34,7 +39,7 @@ class _Trace:
 def trace(**kwargs):
     return _Trace(**kwargs)
 
-
+# noinspection PyUnusedLocal
 def uppercase_log_level(logger, log_method, event_dict):
     # Replace the level with its uppercase version
     event_dict["level"] = log_method.upper()
@@ -43,18 +48,19 @@ def uppercase_log_level(logger, log_method, event_dict):
 
 class PythonLoggingInterceptHandler(logging.Handler):
     """
-    A logging handler that intercepts standard log records and re-emits them via structlog.
+    A logging handler that intercepts standard logging records and re-emits them via structlog.
     """
 
     def emit(self, record: logging.LogRecord) -> None:
         # Retrieve the corresponding structlog logging using the record’s name.
         logger = structlog.get_logger(record.name)
-        # Use the numeric log level from the record.
+        # Use the numeric logging level from the record.
         level = record.levelno
-        # Re-emit the log record’s message along with any extra context.
-        logger.log(level, record.getMessage(), **record.__dict__)
+        # Re-emit the logging record’s message along with any extra context.
+        logger._logger(level, record.getMessage(), **record.__dict__)
 
 
+# noinspection PyUnusedLocal
 def min_log_level_from_env(min_level):
     env_level = os.environ.get("LOG_LEVEL", "")
     match env_level.upper():
@@ -76,7 +82,7 @@ def min_log_level_from_env(min_level):
             min_level = logging.NOTSET
     return min_level
 
-
+# noinspection PyUnusedLocal
 def configure(min_level: Union[str, int, None] = logging.NOTSET, pretty: Optional[bool] = None):
     if min_level is None:
         min_level = min_log_level_from_env(min_level)
@@ -114,7 +120,7 @@ def configure(min_level: Union[str, int, None] = logging.NOTSET, pretty: Optiona
                 structlog.dev.ConsoleRenderer(colors=True),
             ]
 
-        # Check if debugger is running
+        # Check if the debugger is running
         elif "pydevd" in globals():
             processors = shared_processors + [
                 structlog.dev.ConsoleRenderer(colors=True),

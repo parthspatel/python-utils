@@ -1,9 +1,11 @@
-import logging
 import time
 from functools import partial, update_wrapper
 
+import logging
+
 TIME_DURATION_UNITS = (("week", 60 * 60 * 24 * 7), ("day", 60 * 60 * 24), ("hour", 60 * 60), ("min", 60), ("sec", 1))
 
+_logger = logging.getLogger(__name__)
 
 def pretty_print_duration(seconds):
 	if seconds == 0:
@@ -22,13 +24,13 @@ def default_msg_fx(function_name, duration):
 
 
 class _TimeMethod:
-	def __init__(self, func, msg_fx=default_msg_fx, log_fx=logging.info):
+	def __init__(self, func, msg_fx=default_msg_fx, log_fx=_logger.info):
 		update_wrapper(self, func)
 		self.func = func
 		self.msg_fx = msg_fx
 		self.log_fx = log_fx
 
-	def __get__(self, obj, objtype):
+	def __get__(self, obj, obj_type):
 		"""Support instance methods."""
 		return partial(self.__call__, obj)
 
@@ -43,12 +45,13 @@ class _TimeMethod:
 		return result
 
 
-def TimeMethod(func=None, msg_fx=default_msg_fx, log_fx=logging.info):
+# noinspection PyPep8Naming
+def TimeMethod(func=None, msg_fx=default_msg_fx, log_fx=_logger.info):
 	if func:
 		return _TimeMethod(func)
 
-	def wrapper(func):
-		return _TimeMethod(func, msg_fx, log_fx)
+	def wrapper(_func):
+		return _TimeMethod(_func, msg_fx, log_fx)
 
 	return wrapper
 

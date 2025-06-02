@@ -2,7 +2,7 @@ import itertools
 import logging
 from typing import *
 
-log = logging.Logger(__name__)
+_logger = logging.getLogger(__name__)
 
 _TResult = TypeVar("_TResult")
 
@@ -15,6 +15,7 @@ def flatmap(func, *iterable):
     return itertools.chain.from_iterable(map(func, *iterable))
 
 
+# noinspection SpellCheckingInspection
 def groupby(iterable, key_fx, sort_keys: bool = True, inner_sort_fx: Optional[Callable] = None) -> Dict[_TResult, List[_TResult]]:
     if sort_keys:
         iterable.sort(key=key_fx)
@@ -31,10 +32,12 @@ def groupby(iterable, key_fx, sort_keys: bool = True, inner_sort_fx: Optional[Ca
     return {k: __inner(v) for k, v in itertools.groupby(iterable, key_fx)}
 
 
+# noinspection SpellCheckingInspection
 def groupbylist(iterable: object, key_fx: object, sort_keys: bool = True, inner_sort_fx: Optional[Callable] = None) -> Dict[_TResult, List[_TResult]]:
     return groupby(iterable, key_fx, sort_keys, inner_sort_fx)
 
 
+# noinspection SpellCheckingInspection
 def groupbyset(iterable, key_fx, sort: bool = True) -> Dict[_TResult, Set[_TResult]]:
     if sort:
         iterable.sort(key=key_fx)
@@ -54,8 +57,8 @@ async def chunk_async(iterable, size=10):
         yield itertools.chain([first], itertools.islice(iterator, size - 1))
 
 
-def put_and_get_existing(key, value, map: Dict):
-    if key in map:
-        return map[key]
-    map[key] = value
+def put_and_get_existing(key, value, lookup: Dict):
+    if key in lookup:
+        return lookup[key]
+    lookup[key] = value
     return value

@@ -8,8 +8,7 @@ from jsonpath_ng import DatumInContext, jsonpath
 from jsonpath_ng.ext import parse
 from pydantic import Field, field_serializer
 
-from pyutils.base import funcs
-from pyutils.base.funcs import serialize_callable
+from pyutils.core import funcs, serde
 from pyutils.pydantic import BaseModel
 
 _TResult = TypeVar("_TResult")
@@ -111,7 +110,7 @@ class JPath(BaseModel):
     def _serialize_fx(self, value):
         if value is None:
             return None
-        return serialize_callable(value.func)
+        return serde.serialize_callable(value.func)
 
     def model_dump(self, *args, **kwargs):
         kwargs["exclude_none"] = True
@@ -121,6 +120,7 @@ class JPath(BaseModel):
         kwargs["exclude_none"] = True
         return super().model_dump_json(*args, **kwargs)
 
+    # noinspection PyUnusedLocal
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type, handler):
         import pydantic_core
@@ -133,12 +133,12 @@ class JPath(BaseModel):
                     raise ValueError(f"Failed to parse JPath expr from string '{val}': {e}")
             return _handler(val)
 
-        def callable_to_pyfunc(val, _handler):
-            if isinstance(val, PyFunc):
-                return val
-            if callable(val):
-                return PyFunc(val)
-            raise TypeError("Value must be callable or a PyFunc instance.")
+        # def callable_to_pyfunc(val, _handler):
+        #     if isinstance(val, PyFunc):
+        #         return val
+        #     if callable(val):
+        #         return PyFunc(val)
+        #     raise TypeError("Value must be callable or a PyFunc instance.")
 
         return pydantic_core.core_schema.no_info_wrap_validator_function(
             string_to_jpath,

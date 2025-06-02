@@ -2,11 +2,11 @@ import abc
 import json
 import warnings
 
-import structlog
+from .. import logging
 import yaml
 from pydantic import BaseModel as PydanticBaseModel
 
-logger = structlog.get_logger()
+_logger = logging.getLogger()
 
 
 class BaseModel(PydanticBaseModel, abc.ABC):
@@ -33,11 +33,11 @@ class DeprecatedModel(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, **kwargs):
         class_name = self.__class__.__name__
         message = (
-            f"⚠️ WARNING: The use of `{class_name}` is discouraged.  Please consider an alternative approach."
+            f"The use of `{class_name}` is discouraged.  Please consider an alternative approach."
         )
-        logger.warning(message)
+        _logger.warning(message)
         warnings.warn(message, category=UserWarning, stacklevel=2)
-        super().__init__(*args, **kwargs)
+        super().__init__(**kwargs)
