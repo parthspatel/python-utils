@@ -12,9 +12,11 @@ from structlog.typing import FilteringBoundLogger
 
 _AnyLogger = FilteringBoundLogger | structlog.stdlib.AsyncBoundLogger | Any
 
+
 # noinspection PyPep8Naming
 def getLogger(*args: Any, **initial_values: Any) -> _AnyLogger:
     return structlog.get_logger(*args, **initial_values)
+
 
 class _Trace:
     tokens: Mapping[str, Token[Any]]
@@ -39,6 +41,7 @@ class _Trace:
 def trace(**kwargs):
     return _Trace(**kwargs)
 
+
 # noinspection PyUnusedLocal
 def uppercase_log_level(logger, log_method, event_dict):
     # Replace the level with its uppercase version
@@ -54,10 +57,12 @@ class PythonLoggingInterceptHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         # Retrieve the corresponding structlog logging using the record’s name.
         logger = structlog.get_logger(record.name)
-        # Use the numeric logging level from the record.
-        level = record.levelno
+
         # Re-emit the logging record’s message along with any extra context.
-        logger._logger(level, record.getMessage(), **record.__dict__)
+        level = record.levelno
+        ctx = record.__dict__
+        msg = record.getMessage()
+        logger.log(level, msg, **ctx)
 
 
 # noinspection PyUnusedLocal
@@ -82,12 +87,24 @@ def min_log_level_from_env(min_level):
             min_level = logging.NOTSET
     return min_level
 
+
+def add_otel_context(_, __, event_dict):
+    from opentelemetry.trace import get_current_span
+    span = get_current_span()
+    if span and span.get_span_context().is_valid:
+        ctx = span.get_span_context()
+        event_dict["trace_id"] = format(ctx.trace_id, "032x")
+        event_dict["span_id"] = format(ctx.span_id, "016x")
+    return event_dict
+
+
 # noinspection PyUnusedLocal
 def configure(min_level: Union[str, int, None] = logging.NOTSET, pretty: Optional[bool] = None):
     if min_level is None:
         min_level = min_log_level_from_env(min_level)
 
     shared_processors = [
+        add_otel_context,
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.StackInfoRenderer(),
