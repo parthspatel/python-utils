@@ -134,7 +134,6 @@ class PythonLoggingInterceptHandler(logging.Handler):
         logger.log(level, msg, **ctx)
 
 
-
 # noinspection PyUnusedLocal
 def min_log_level_from_env(min_level):
     env_level = os.environ.get("LOG_LEVEL", "")
@@ -187,6 +186,7 @@ def configure(min_level: Union[str, int, None] = logging.NOTSET, pretty: Optiona
             ]),
         structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False),
         uppercase_log_level,
+        logfire.StructlogProcessor(),
     ]
 
     if pretty is not None and pretty:
@@ -311,13 +311,13 @@ def start_span(name: str, *, attributes: Optional[Mapping[str, Any]] = None, kin
 
 
 def configure_tracing(
-    *,
-    service_name: Optional[str] = None,
-    exporter: str = "console",
-    endpoint: Optional[str] = None,
-    headers: Optional[Mapping[str, str]] = None,
-    resource_attributes: Optional[Mapping[str, Any]] = None,
-    use_batch: bool = True,
+        *,
+        service_name: Optional[str] = None,
+        exporter: str = "console",
+        endpoint: Optional[str] = None,
+        headers: Optional[Mapping[str, str]] = None,
+        resource_attributes: Optional[Mapping[str, Any]] = None,
+        use_batch: bool = True,
 ) -> None:
     """Configure a global OpenTelemetry TracerProvider and exporter.
 
