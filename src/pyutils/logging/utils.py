@@ -88,14 +88,18 @@ def min_log_level_from_env(min_level):
     return min_level
 
 
-def add_otel_context(_, __, event_dict):
-    from opentelemetry.trace import get_current_span
-    span = get_current_span()
-    if span and span.get_span_context().is_valid:
-        ctx = span.get_span_context()
-        event_dict["trace_id"] = format(ctx.trace_id, "032x")
-        event_dict["span_id"] = format(ctx.span_id, "016x")
+
+from opentelemetry import trace
+
+def add_otel_span_context(_, __, event_dict):
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return event_dict
+    ctx = span.get_span_context()
+    event_dict["trace_id"] = format(ctx.trace_id, "032x")
+    event_dict["span_id"] = format(ctx.span_id, "016x")
     return event_dict
+
 
 
 # noinspection PyUnusedLocal
@@ -104,7 +108,7 @@ def configure(min_level: Union[str, int, None] = logging.NOTSET, pretty: Optiona
         min_level = min_log_level_from_env(min_level)
 
     shared_processors = [
-        add_otel_context,
+        add_otel_span_context,
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.StackInfoRenderer(),
