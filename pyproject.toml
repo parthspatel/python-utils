@@ -1,6 +1,6 @@
 [project]
 name = "pyutils"
-version = "0.12.3"
+version = "0.12.4"
 description = "Python utilities"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,6 +23,7 @@ logging = [
     "structlog>=25.2.0",
     "opentelemetry-sdk>=1.37.0",
     "psutil>=7.0.0",
+    "logfire>=2.0.0",
 ]
 jpath = [
     "pydantic>=2.11.3",

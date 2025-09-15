@@ -13,7 +13,42 @@ from structlog.typing import FilteringBoundLogger
 from opentelemetry import trace as otel_trace
 from opentelemetry.trace import Span, SpanContext
 
+try:  # Optional dependency
+    import logfire  # type: ignore
+except Exception:  # pragma: no cover - optional
+    logfire = None  # type: ignore
+
 _AnyLogger = FilteringBoundLogger | structlog.stdlib.AsyncBoundLogger | Any
+
+
+def configure_logfire(service_name: Optional[str] = None) -> None:
+    """Initialize Logfire as the primary logging backbone if available.
+
+    - Picks service name from parameter or OTEL_SERVICE_NAME env var, defaulting to "pyutils".
+    - Instruments stdlib logging so that logging.* is captured by Logfire.
+    """
+    if logfire is None:  # pragma: no cover - optional
+        raise RuntimeError("logfire is not installed")
+
+    svc = service_name or os.environ.get("OTEL_SERVICE_NAME") or "pyutils"
+
+    # Configure logfire, be tolerant to API shape across versions
+    configured = False
+    try:
+        logfire.configure(service_name=svc)  # type: ignore[arg-type]
+        configured = True
+    except Exception:
+        # Fall back to simplest call
+        logfire.configure()  # type: ignore[call-arg]
+        configured = True
+
+    # Best-effort stdlib logging instrumentation so 3rd-party logs go to Logfire
+    try:
+        inst = getattr(logfire, "instrument_logging", None)
+        if callable(inst):
+            inst()
+    except Exception:
+        pass
 
 
 # noinspection PyPep8Naming
@@ -128,6 +163,15 @@ def configure(min_level: Union[str, int, None] = logging.NOTSET, pretty: Optiona
     if min_level is None:
         min_level = min_log_level_from_env(min_level)
 
+    # Prefer Logfire as the logging backbone when available (and not disabled)
+    use_logfire = bool(logfire) and os.environ.get("LOGFIRE_ENABLED", "1") != "0"
+    if use_logfire:
+        try:
+            configure_logfire()
+        except Exception:
+            # Fall back silently to structlog-only if Logfire setup fails
+            use_logfire = False
+
     shared_processors = [
         structlog.contextvars.merge_contextvars,
         opentelemetry_context,
@@ -207,13 +251,15 @@ def configure(min_level: Union[str, int, None] = logging.NOTSET, pretty: Optiona
         cache_logger_on_first_use=False
     )
 
-    logging.basicConfig(
-        force=True,
-        level=min_level,
-        handlers=[
-            PythonLoggingInterceptHandler()
-        ]
-    )
+    # If Logfire is active, avoid intercepting stdlib logging to structlog to prevent duplicate emission.
+    if not use_logfire:
+        logging.basicConfig(
+            force=True,
+            level=min_level,
+            handlers=[
+                PythonLoggingInterceptHandler()
+            ]
+        )
 
 
 def get_tracer(name: Optional[str] = None):
@@ -322,4 +368,4 @@ def configure_tracing(
     provider.add_span_processor(processor_cls(span_exporter))
 
     # Set the global provider
-    trace.set_tracer_provider(provider)
+    otel_trace.set_tracer_provider(provider)
