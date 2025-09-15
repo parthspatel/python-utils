@@ -2,13 +2,16 @@ import logging
 import os
 import sys
 from contextvars import Token
-from typing import Any, Mapping, Dict, Union, Optional
+from typing import Any, Mapping, Dict, Union, Optional, Iterable
 
 import psutil
 import structlog
 from structlog.contextvars import bind_contextvars, unbind_contextvars
 from structlog.processors import CallsiteParameter
 from structlog.typing import FilteringBoundLogger
+
+from opentelemetry import trace as otel_trace
+from opentelemetry.trace import Span, SpanContext
 
 _AnyLogger = FilteringBoundLogger | structlog.stdlib.AsyncBoundLogger | Any
 
@@ -49,6 +52,37 @@ def uppercase_log_level(logger, log_method, event_dict):
     return event_dict
 
 
+def _format_trace_id(ctx: SpanContext) -> str:
+    return f"{ctx.trace_id:032x}"
+
+
+def _format_span_id(ctx: SpanContext) -> str:
+    return f"{ctx.span_id:016x}"
+
+
+# noinspection PyUnusedLocal
+def opentelemetry_context(logger, log_method, event_dict):
+    """
+    structlog processor that adds OpenTelemetry trace/span identifiers if a valid span is active.
+    Fields added (when available):
+    - otel.trace_id
+    - otel.span_id
+    - otel.trace_flags
+    """
+    try:
+        span: Span = otel_trace.get_current_span()
+        ctx: SpanContext = span.get_span_context()  # type: ignore[assignment]
+        if ctx is not None and ctx.is_valid:
+            event_dict.setdefault("otel.trace_id", _format_trace_id(ctx))
+            event_dict.setdefault("otel.span_id", _format_span_id(ctx))
+            # Represent trace flags as two-digit hex (e.g., 01 for sampled)
+            event_dict.setdefault("otel.trace_flags", f"{int(ctx.trace_flags):02x}")
+    except Exception:
+        # Avoid breaking logging if OTel is misconfigured
+        pass
+    return event_dict
+
+
 class PythonLoggingInterceptHandler(logging.Handler):
     """
     A logging handler that intercepts standard logging records and re-emits them via structlog.
@@ -63,6 +97,7 @@ class PythonLoggingInterceptHandler(logging.Handler):
         ctx = record.__dict__
         msg = record.getMessage()
         logger.log(level, msg, **ctx)
+
 
 
 # noinspection PyUnusedLocal
@@ -88,28 +123,14 @@ def min_log_level_from_env(min_level):
     return min_level
 
 
-
-from opentelemetry import trace
-
-def add_otel_span_context(_, __, event_dict):
-    span = trace.get_current_span()
-    if not span.is_recording():
-        return event_dict
-    ctx = span.get_span_context()
-    event_dict["trace_id"] = format(ctx.trace_id, "032x")
-    event_dict["span_id"] = format(ctx.span_id, "016x")
-    return event_dict
-
-
-
 # noinspection PyUnusedLocal
 def configure(min_level: Union[str, int, None] = logging.NOTSET, pretty: Optional[bool] = None):
     if min_level is None:
         min_level = min_log_level_from_env(min_level)
 
     shared_processors = [
-        add_otel_span_context,
         structlog.contextvars.merge_contextvars,
+        opentelemetry_context,
         structlog.processors.add_log_level,
         structlog.processors.StackInfoRenderer(),
         structlog.dev.set_exc_info,
@@ -193,3 +214,112 @@ def configure(min_level: Union[str, int, None] = logging.NOTSET, pretty: Optiona
             PythonLoggingInterceptHandler()
         ]
     )
+
+
+def get_tracer(name: Optional[str] = None):
+    """Return a global OpenTelemetry tracer.
+
+    If no name is provided, uses the caller module name when available.
+    """
+    if name is None:
+        # Fallback to this module's name to avoid expensive stack inspection
+        name = __name__
+    return otel_trace.get_tracer(name)
+
+
+class _Span:
+    def __init__(self, name: str, attributes: Optional[Mapping[str, Any]] = None, kind: Optional[Any] = None):
+        self.name = name
+        self.attributes = attributes or {}
+        self.kind = kind
+        self._cm = None
+
+    def __enter__(self):
+        tracer = get_tracer()
+        kw = {}
+        if self.kind is not None:
+            kw["kind"] = self.kind
+        self._cm = tracer.start_as_current_span(self.name, attributes=dict(self.attributes), **kw)
+        span = self._cm.__enter__()
+        return span
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._cm is not None:
+            self._cm.__exit__(exc_type, exc_val, exc_tb)
+
+    async def __aenter__(self):
+        return self.__enter__()
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.__exit__(exc_type, exc_val, exc_tb)
+
+
+def start_span(name: str, *, attributes: Optional[Mapping[str, Any]] = None, kind: Optional[Any] = None):
+    """Convenience context manager to start an OTel span.
+
+    Usage:
+        with start_span("operation", attributes={"key": "value"}):
+            ...
+    """
+    return _Span(name, attributes=attributes, kind=kind)
+
+
+def configure_tracing(
+    *,
+    service_name: Optional[str] = None,
+    exporter: str = "console",
+    endpoint: Optional[str] = None,
+    headers: Optional[Mapping[str, str]] = None,
+    resource_attributes: Optional[Mapping[str, Any]] = None,
+    use_batch: bool = True,
+) -> None:
+    """Configure a global OpenTelemetry TracerProvider and exporter.
+
+    - exporter: "console" (default) or "otlp". If "otlp" is selected but the OTLP exporter is not available,
+      falls back to console.
+    - endpoint and headers are used only for the OTLP exporter when provided.
+
+    Environment fallbacks:
+    - service_name defaults to OTEL_SERVICE_NAME or "pyutils".
+    - endpoint defaults to OTEL_EXPORTER_OTLP_ENDPOINT when not provided.
+    """
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import (
+        BatchSpanProcessor,
+        SimpleSpanProcessor,
+        ConsoleSpanExporter,
+    )
+
+    service_name = service_name or os.environ.get("OTEL_SERVICE_NAME") or "pyutils"
+
+    # Build resource with provided and default attributes
+    attrs: Dict[str, Any] = {"service.name": service_name}
+    if resource_attributes:
+        attrs.update(resource_attributes)
+    resource = Resource.create(attrs)
+
+    provider = TracerProvider(resource=resource)
+
+    processor_cls = BatchSpanProcessor if use_batch else SimpleSpanProcessor
+
+    span_exporter = None
+    if exporter.lower() == "otlp":
+        try:
+            # Prefer HTTP/proto exporter for portability
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter  # type: ignore
+
+            span_exporter = OTLPSpanExporter(
+                endpoint=(endpoint or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")),
+                headers=headers,
+            )
+        except Exception:
+            # Fall back to console exporter if OTLP exporter is unavailable/misconfigured
+            span_exporter = ConsoleSpanExporter()
+    else:
+        span_exporter = ConsoleSpanExporter()
+
+    provider.add_span_processor(processor_cls(span_exporter))
+
+    # Set the global provider
+    trace.set_tracer_provider(provider)
