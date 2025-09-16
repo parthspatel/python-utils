@@ -1,282 +1,436 @@
+"""Configuration system for structlog backed by OpenTelemetry."""
+
+import asyncio
+import functools
 import logging
 import os
+import socket
 import sys
-from typing import Any, Union, Optional, Sequence, Literal
-import threading
-from types import FrameType
+import warnings
+from contextlib import contextmanager
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import structlog
-from opentelemetry import trace
+from structlog._log_levels import add_log_level
+from opentelemetry import trace, context as otel_context
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+from opentelemetry.sdk._logs._internal.export import ConsoleLogExporter, LogExporter
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource, psutil
-from structlog.processors import CallsiteParameter
-from structlog.typing import FilteringBoundLogger
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from opentelemetry.trace import set_tracer_provider
+from pydantic import BaseModel, Field
+
+from .structlog_exporter import StructlogHandler
 
 
-AnyLogger = FilteringBoundLogger | structlog.stdlib.AsyncBoundLogger | Any
-AnyLoggerFactory = structlog.BytesLoggerFactory | structlog.PrintLoggerFactory | structlog.WriteLoggerFactory | structlog.ReturnLoggerFactory
-
-def getLogger(*args: Any, **initial_values: Any) -> AnyLogger:
-    return structlog.get_logger(*args, **initial_values)
-
-
-def get_logger(*args: Any, **initial_values: Any) -> AnyLogger:
-    return getLogger(*args, **initial_values)
+class OutputFormat(str, Enum):
+    """Available output formats for logs."""
+    PRETTY = "pretty"
+    JSON = "json"
+    PROTO = "proto"
+    KEY_VALUE = "key_value"
 
 
-def min_log_level_from_env(default: Union[str, int] = logging.NOTSET) -> int:
-    """Get the minimum log level from LOG_LEVEL env."""
-    env_level = os.environ.get("LOG_LEVEL", "")
-    return getattr(logging, env_level.upper(), default)
+class ExportTarget(str, Enum):
+    """Available export targets for logs."""
+    CONSOLE = "console"
+    OTLP = "otlp"
+    FILE = "file"
 
 
-def uppercase_log_level(logger, log_method, event_dict):
-    """Replace the log level with its uppercase version."""
-    event_dict["level"] = log_method.upper()
+class LogLevel(str, Enum):
+    """Log levels."""
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+
+class StructlogConfig(BaseModel):
+    """Configuration for structlog processors."""
+
+    include_stdlib: bool = Field(default=True, description="Include stdlib logging")
+    log_level: LogLevel = Field(default=LogLevel.INFO, description="Log level")
+    add_logger_name: bool = Field(default=True, description="Add logger name to output")
+    add_log_level: bool = Field(default=True, description="Add log level to output")
+    add_trace_context: bool = Field(default=True, description="Add trace and span IDs and names to logs for correlation")
+    processors: Optional[List[Callable]] = Field(default=None, description="Custom processors")
+
+    class Config:
+        arbitrary_types_allowed = True
+
+
+class OtelConfig(BaseModel):
+    """Configuration for OpenTelemetry."""
+
+    service_name: str = Field(description="Service name for telemetry")
+    service_version: Optional[str] = Field(default=None, description="Service version")
+    service_instance_id: Optional[str] = Field(default=None, description="Service instance ID")
+    endpoint: Optional[str] = Field(default=None, description="OTLP endpoint")
+    headers: Optional[Dict[str, str]] = Field(default=None, description="OTLP headers")
+    insecure: bool = Field(default=False, description="Use insecure connection")
+    console_span_export: bool = Field(default=False, description="Export spans to console for debugging")
+
+
+class LoggingConfig(BaseModel):
+    """Main logging configuration."""
+
+    output_format: OutputFormat = Field(default=OutputFormat.PRETTY, description="Output format")
+    export_target: ExportTarget = Field(default=ExportTarget.CONSOLE, description="Export target")
+    file_path: Optional[str] = Field(default=None, description="File path for file export")
+    structlog_config: StructlogConfig = Field(default_factory=StructlogConfig, description="Structlog configuration")
+    otel_config: Optional[OtelConfig] = Field(default=None, description="OpenTelemetry configuration")
+
+
+# Global state
+_configured = False
+_tracer_provider: Optional[TracerProvider] = None
+_logger_cache: Dict[str, Any] = {}
+
+# Context key for storing span attributes
+_SPAN_ATTRIBUTES_KEY = otel_context.create_key("span_attributes")
+
+
+def _get_default_service_name() -> str:
+    """Get default service name."""
+    return os.path.basename(sys.argv[0]) if sys.argv else "unknown-service"
+
+
+def _get_hostname() -> str:
+    """Get hostname for service instance ID."""
+    try:
+        return socket.gethostname()
+    except Exception:
+        return "unknown-host"
+
+
+def _add_logger_name(logger, method_name, event_dict):
+    """Add logger name to event dict."""
+    if hasattr(logger, 'name') and logger.name:
+        event_dict['logger'] = logger.name
     return event_dict
 
 
-class PythonLoggingInterceptHandler(logging.Handler):
-    """
-    A logging handler that intercepts standard logging records and re-emits them via structlog.
-    """
-
-    def emit(self, record: logging.LogRecord) -> None:
-        # Retrieve the corresponding structlog logging using the record’s name.
-        logger = structlog.get_logger(record.name)
-
-        # Re-emit the logging record’s message along with any extra context.
-        level = record.levelno
-        ctx = record.__dict__
-        msg = record.getMessage()
-        logger.log(level, msg, **ctx)
-
-
-class StdStreamToStructlog:
-    """
-    File-like object that intercepts writes to stdout/stderr and forwards them to structlog.
-
-    - Buffers until a newline to preserve print() semantics.
-    - Avoids recursion by writing directly to the original stream when already logging.
-    - Writes are logged at a specified level (INFO for stdout, ERROR for stderr by default).
-    """
-
-    def __init__(self, level: int, stream_name: str, original_stream):
-        self.level = level
-        self.stream_name = stream_name
-        self._buf = ""
-        self._lock = threading.Lock()
-        self._orig = original_stream
-        self._tls = threading.local()
-
-    def write(self, data):
-        if not data:
-            return 0
-        if not isinstance(data, str):
-            data = str(data)
-        with self._lock:
-            self._buf += data
-            # Flush on every newline to preserve typical print behavior
-            while "\n" in self._buf:
-                line, self._buf = self._buf.split("\n", 1)
-                self._log_line(line)
-        return len(data)
-
-    def flush(self):
-        with self._lock:
-            if self._buf:
-                self._log_line(self._buf)
-                self._buf = ""
-        try:
-            self._orig.flush()
-        except Exception:
-            pass
-
-    def isatty(self):
-        # It's not a TTY from Python's perspective
-        return False
-
-    def fileno(self):
-        # Delegate if possible, otherwise raise
-        try:
-            return self._orig.fileno()
-        except Exception as e:
-            raise OSError("No fileno for StdStreamToStructlog") from e
-
-    def _log_line(self, line: str):
-        if line is None:
-            return
-        # Strip trailing carriage returns that may appear on Windows
-        line = line.rstrip("\r")
-        if line == "":
-            return
-
-        # Prevent recursion if structlog itself writes to the intercepted streams
-        if getattr(self._tls, "in_log", False):
-            try:
-                self._orig.write(line + "\n")
-            except Exception:
-                pass
-            return
-
-        try:
-            self._tls.in_log = True
-            logger = structlog.get_logger("print")
-            # Tag prints, actual callsite will be computed by our callsite enricher.
-            logger.log(self.level, line, stream=self.stream_name)
-        finally:
-            self._tls.in_log = False
-
-
-def _callsite_enricher(logger, log_method, event_dict):
-    """Add callsite fields (thread_name, module, func_name, lineno) for the original caller.
-
-    Skips frames that belong to structlog, logging, this module (the print interceptor),
-    and builtins.print so that prints show the user function that called print().
-    """
+def _add_trace_context(logger, method_name, event_dict):
+    """Add trace and span IDs, span name, and span attributes to event dict for correlation with OpenTelemetry traces."""
     try:
-        # Walk the frame stack manually for performance.
-        f: FrameType = sys._getframe()
-        # Exclude these module prefixes
-        exclude_mod_prefixes = (
-            "structlog",
-            "logging",
-            __name__,  # this module (print interceptor)
-        )
-        exclude_funcs = {"write", "_log_line", "emit", "log", "print"}
-        # Step out of structlog processors into the actual call site
-        while f is not None:
-            f = f.f_back
-            if f is None:
-                break
-            mod = f.f_globals.get("__name__", "")
-            func = f.f_code.co_name
-            if any(mod.startswith(p) for p in exclude_mod_prefixes):
-                continue
-            if mod == "builtins" and func == "print":
-                continue
-            if func in exclude_funcs and (mod.startswith(__name__) or mod.startswith("builtins")):
-                continue
-            # Found a suitable frame
-            event_dict["thread_name"] = threading.current_thread().name
-            event_dict["module"] = mod.split(".")[-1]
-            event_dict["func_name"] = func
-            event_dict["lineno"] = f.f_lineno
-            break
+        current_span = trace.get_current_span()
+        if current_span and current_span.is_recording():
+            span_context = current_span.get_span_context()
+            if span_context.trace_id != 0:
+                # Format as hex strings with 0x prefix for readability
+                event_dict['trace_id'] = f"0x{span_context.trace_id:032x}"
+                event_dict['span_id'] = f"0x{span_context.span_id:016x}"
+                event_dict['span_name'] = current_span.name
+
+                # Add span attributes from context
+                span_attributes = otel_context.get_value(_SPAN_ATTRIBUTES_KEY)
+                if span_attributes:
+                    for key, value in span_attributes.items():
+                        # Avoid overwriting existing log fields
+                        if key not in event_dict:
+                            # Convert value to string if it's not JSON serializable
+                            try:
+                                if isinstance(value, (str, int, float, bool)) or value is None:
+                                    event_dict[key] = value
+                                else:
+                                    event_dict[key] = str(value)
+                            except Exception:
+                                # Skip attributes that can't be serialized
+                                continue
     except Exception:
-        # Best-effort only
+        # Don't fail logging if trace context is unavailable
         pass
     return event_dict
 
 
-def configure(
-    service_name: str,
-    min_level: Optional[Union[str, int]] = None,
-    pretty: Optional[bool] = None,
-    exporter: Optional[Union[Literal["oltp"], Literal["console"], SpanExporter]] = "console",
-    processors: Optional[Sequence] = None,
-    logger_factory: Optional[AnyLoggerFactory] = None,
-    wrapper_class: Optional[type] = None,
-):
-    """
-    Configure structlog + OpenTelemetry.
-    """
-
-    # --- Logging level ---
-    if min_level is None:
-        min_level = min_log_level_from_env(logging.NOTSET)
-    elif isinstance(min_level, str):
-        min_level = getattr(logging, min_level.upper(), logging.NOTSET)
-
-    # --- OpenTelemetry ---
-    resource = Resource.create({"service.name": service_name})
-    provider = TracerProvider(resource=resource)
-    trace.set_tracer_provider(provider)
-
-    if exporter == "otlp":
-        exporter_obj = OTLPSpanExporter()
-    elif exporter == "console":
-        from opentelemetry.sdk.trace.export import ConsoleSpanExporter
-        exporter_obj = ConsoleSpanExporter()
-    elif isinstance(exporter, SpanExporter):
-        exporter_obj = exporter
+def _create_console_processor(output_format: OutputFormat) -> Callable:
+    """Create console processor based on output format."""
+    if output_format == OutputFormat.PRETTY:
+        return structlog.dev.ConsoleRenderer(colors=True)
+    elif output_format == OutputFormat.JSON:
+        return structlog.processors.JSONRenderer()
+    elif output_format == OutputFormat.KEY_VALUE:
+        return structlog.processors.KeyValueRenderer()
     else:
-        raise ValueError(f"Unsupported exporter: {exporter}")
+        return structlog.dev.ConsoleRenderer(colors=False)
 
-    provider.add_span_processor(BatchSpanProcessor(exporter_obj))
 
-    # --- Default processors ---
-    shared_processors = [
-        structlog.contextvars.merge_contextvars,
-        structlog.processors.add_log_level,
-        structlog.processors.StackInfoRenderer(),
-        structlog.dev.set_exc_info,
-        _callsite_enricher, # custom callsite enricher to attribute prints to their caller
-        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False),
-        uppercase_log_level,
-    ]
+def _create_log_exporter(config: LoggingConfig) -> LogExporter:
+    """Create log exporter based on configuration."""
+    if config.export_target == ExportTarget.CONSOLE:
+        return ConsoleLogExporter()
+    elif config.export_target == ExportTarget.OTLP:
+        if not config.otel_config or not config.otel_config.endpoint:
+            raise ValueError("OTLP endpoint required for OTLP export target")
 
-    if processors is None:
-        processors = _default_renderers(shared_processors, pretty)
+        return OTLPLogExporter(
+            endpoint=config.otel_config.endpoint,
+            headers=config.otel_config.headers or {},
+            insecure=config.otel_config.insecure,
+        )
+    elif config.export_target == ExportTarget.FILE:
+        if not config.file_path:
+            raise ValueError("File path required for file export target")
+        # Note: OpenTelemetry doesn't have a built-in file exporter
+        # You might need to implement a custom file exporter
+        warnings.warn("File export not yet implemented, falling back to console")
+        return ConsoleLogExporter()
+    else:
+        raise ValueError(f"Unsupported export target: {config.export_target}")
 
+
+def _setup_otel_tracing(config: Optional[OtelConfig]) -> TracerProvider:
+    """Set up OpenTelemetry tracing."""
+    global _tracer_provider
+
+    if _tracer_provider is not None:
+        return _tracer_provider
+
+    tracer_provider = TracerProvider()
+
+    # Add console span exporter if requested
+    if config and config.console_span_export:
+        console_processor = BatchSpanProcessor(ConsoleSpanExporter())
+        tracer_provider.add_span_processor(console_processor)
+
+    # TODO: Add OTLP span exporter if configured
+
+    set_tracer_provider(tracer_provider)
+    _tracer_provider = tracer_provider
+    return tracer_provider
+
+
+def configure_logging(config: LoggingConfig) -> None:
+    """Configure structlog with OpenTelemetry backend."""
+    global _configured
+
+    if _configured:
+        warnings.warn("Logging already configured, skipping reconfiguration")
+        return
+
+    # Set up OpenTelemetry tracing
+    tracer_provider = _setup_otel_tracing(config.otel_config)
+
+    # Create processors list
+    processors = []
+
+    # Add standard processors
+    if config.structlog_config.add_log_level:
+        processors.append(add_log_level)
+
+    if config.structlog_config.add_logger_name:
+        processors.append(_add_logger_name)
+
+    # Add timestamp processor
+    processors.append(structlog.processors.TimeStamper(fmt="iso"))
+
+    # Add trace context (trace_id, span_id, and span_name) for correlation
+    if config.structlog_config.add_trace_context:
+        processors.append(_add_trace_context)
+
+    # Add custom processors if provided
+    if config.structlog_config.processors:
+        processors.extend(config.structlog_config.processors)
+
+    # Set up export target
+    if config.export_target in [ExportTarget.OTLP, ExportTarget.FILE]:
+        # Use OpenTelemetry exporter
+        if not config.otel_config:
+            config.otel_config = OtelConfig(
+                service_name=_get_default_service_name(),
+                service_instance_id=_get_hostname()
+            )
+
+        exporter = _create_log_exporter(config)
+        otel_processor = StructlogHandler(
+            service_name=config.otel_config.service_name,
+            server_hostname=config.otel_config.service_instance_id or _get_hostname(),
+            exporter=exporter
+        )
+        processors.append(otel_processor)
+    else:
+        # Use console output
+        processors.append(_create_console_processor(config.output_format))
+
+    # Configure structlog
     structlog.configure(
         processors=processors,
-        wrapper_class=wrapper_class
-        or structlog.make_filtering_bound_logger(min_level),
+        wrapper_class=structlog.make_filtering_bound_logger(
+            getattr(logging, config.structlog_config.log_level.value)
+        ),
         context_class=dict,
-        logger_factory=logger_factory or structlog.WriteLoggerFactory(file=sys.__stdout__),
-        cache_logger_on_first_use=False,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
     )
 
-    # Intercept Python's print(), redirecting stdout/stderr to structlog-backed streams
-    # try:
-    #     original_stdout = sys.__stdout__
-    # except Exception:
-    #     original_stdout = sys.stdout
-    # try:
-    #     original_stderr = sys.__stderr__
-    # except Exception:
-    #     original_stderr = sys.stderr
+    # Configure stdlib logging if requested
+    if config.structlog_config.include_stdlib:
+        logging.basicConfig(
+            format="%(message)s",
+            stream=sys.stdout,
+            level=getattr(logging, config.structlog_config.log_level.value),
+        )
 
-    # sys.stdout = StdStreamToStructlog(logging.INFO, "stdout", original_stdout)
-    # sys.stderr = StdStreamToStructlog(logging.ERROR, "stderr", original_stderr)
+    _configured = True
 
-    # Intercept Python's logging, redirecting to structlog
-    logging.basicConfig(
-        force=True,
-        level=min_level,
-        handlers=[
-            PythonLoggingInterceptHandler()
-        ]
+
+def dev_config(
+    service_name: Optional[str] = None,
+    log_level: LogLevel = LogLevel.DEBUG,
+    output_format: OutputFormat = OutputFormat.PRETTY
+) -> LoggingConfig:
+    """Create development configuration."""
+    return LoggingConfig(
+        output_format=output_format,
+        export_target=ExportTarget.CONSOLE,
+        structlog_config=StructlogConfig(
+            log_level=log_level,
+            add_logger_name=True,
+            add_log_level=True,
+        ),
+        otel_config=OtelConfig(
+            service_name=service_name or _get_default_service_name(),
+            service_instance_id=_get_hostname(),
+            console_span_export=False,  # Disable span console output in dev mode
+        ) if service_name else None
     )
 
 
-def _default_renderers(shared_processors, pretty: Optional[bool]):
-    """Smart default renderer selection, overridable by users."""
-    # Force pretty console
-    if pretty is True:
-        return [*shared_processors, structlog.dev.ConsoleRenderer(colors=True)]
-    # Force JSON
-    if pretty is False:
-        return [*shared_processors,
-            structlog.processors.dict_tracebacks,
-            structlog.processors.JSONRenderer(),
-        ]
+def prod_config(
+    service_name: str,
+    otlp_endpoint: str,
+    log_level: LogLevel = LogLevel.INFO,
+    output_format: OutputFormat = OutputFormat.JSON,
+    headers: Optional[Dict[str, str]] = None
+) -> LoggingConfig:
+    """Create production configuration."""
+    return LoggingConfig(
+        output_format=output_format,
+        export_target=ExportTarget.OTLP,
+        structlog_config=StructlogConfig(
+            log_level=log_level,
+            add_logger_name=True,
+            add_log_level=True,
+        ),
+        otel_config=OtelConfig(
+            service_name=service_name,
+            service_instance_id=_get_hostname(),
+            endpoint=otlp_endpoint,
+            headers=headers or {},
+            insecure=False,
+        )
+    )
 
-    # Auto-detect environment
-    if sys.stderr.isatty() or os.environ.get("PYCHARM_HOSTED") == "1":
-        return [*shared_processors, structlog.dev.ConsoleRenderer(colors=True)]
 
-    # Check IntelliJ
-    current = psutil.Process()
-    if any("idea" in p.name().lower() for p in current.parents()):
-        return [*shared_processors, structlog.dev.ConsoleRenderer(colors=True)]
+def get_logger(name: Optional[str] = None) -> structlog.BoundLogger:
+    """Get a structured logger (similar to Rust's tracing)."""
+    if not _configured:
+        # Auto-configure with dev settings
+        configure_logging(dev_config())
 
-    # Fallback: JSON
-    return [
-        *shared_processors,
-        structlog.processors.dict_tracebacks,
-        structlog.processors.JSONRenderer(),
-    ]
+    if name is None:
+        import inspect
+        frame = inspect.currentframe().f_back
+        name = frame.f_globals.get('__name__', 'root')
+
+    if name not in _logger_cache:
+        _logger_cache[name] = structlog.get_logger(name)
+
+    return _logger_cache[name]
+
+
+@contextmanager
+def span(name: str, **attributes):
+    """Create a tracing span (similar to Rust's tracing)."""
+    tracer = trace.get_tracer(__name__)
+
+    # Store span attributes in context so they can be accessed by log processor
+    current_context = otel_context.get_current()
+    context_with_attributes = otel_context.set_value(_SPAN_ATTRIBUTES_KEY, attributes, current_context)
+
+    # Use the context with attributes
+    token = otel_context.attach(context_with_attributes)
+    try:
+        with tracer.start_as_current_span(name, attributes=attributes) as span:
+            logger = get_logger()
+            logger.debug("span_start", span_name=name, **attributes)
+            try:
+                yield span
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                logger.error("span_error", span_name=name, error=str(e), **attributes)
+                raise
+            finally:
+                logger.debug("span_end", span_name=name)
+    finally:
+        otel_context.detach(token)
+
+
+def instrument(func: Optional[Callable] = None, *, name: Optional[str] = None, **attributes):
+    """Decorator to instrument a function with tracing (similar to Rust's tracing)."""
+    def decorator(f: Callable) -> Callable:
+        span_name = name or f"{f.__module__}.{f.__qualname__}"
+
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            with span(span_name, **attributes):
+                return f(*args, **kwargs)
+
+        @functools.wraps(f)
+        async def async_wrapper(*args, **kwargs):
+            with span(span_name, **attributes):
+                return await f(*args, **kwargs)
+
+        return async_wrapper if asyncio.iscoroutinefunction(f) else wrapper
+
+    return decorator if func is None else decorator(func)
+
+
+# Convenience functions for quick setup
+def setup_dev(service_name: Optional[str] = None, log_level: LogLevel = LogLevel.DEBUG) -> None:
+    """Quick setup for development."""
+    configure_logging(dev_config(service_name=service_name, log_level=log_level))
+
+
+def setup_prod(service_name: str, otlp_endpoint: str, log_level: LogLevel = LogLevel.INFO) -> None:
+    """Quick setup for production."""
+    configure_logging(prod_config(service_name=service_name, otlp_endpoint=otlp_endpoint, log_level=log_level))
+
+
+def setup_json_console(service_name: Optional[str] = None, log_level: LogLevel = LogLevel.INFO) -> None:
+    """Setup JSON output to console (good for containerized environments)."""
+    config = dev_config(service_name=service_name, log_level=log_level, output_format=OutputFormat.JSON)
+    configure_logging(config)
+
+
+def setup_dev_with_spans(service_name: Optional[str] = None, log_level: LogLevel = LogLevel.DEBUG) -> None:
+    """Setup development mode with span debugging (shows OpenTelemetry spans in console)."""
+    config = dev_config(service_name=service_name, log_level=log_level)
+    if config.otel_config:
+        config.otel_config.console_span_export = True
+    configure_logging(config)
+
+
+# Re-export for convenience
+__all__ = [
+    "LoggingConfig",
+    "StructlogConfig",
+    "OtelConfig",
+    "OutputFormat",
+    "ExportTarget",
+    "LogLevel",
+    "configure_logging",
+    "dev_config",
+    "prod_config",
+    "get_logger",
+    "span",
+    "instrument",
+    "setup_dev",
+    "setup_dev_with_spans",
+    "setup_prod",
+    "setup_json_console",
+]
