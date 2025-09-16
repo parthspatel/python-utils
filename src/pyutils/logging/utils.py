@@ -94,8 +94,7 @@ def _make_trace_decorator(*, name: Optional[str] = None, whitelist: Optional[Ite
     def decorator(func):
         span_name = name or f"{func.__module__}.{getattr(func, '__qualname__', func.__name__)}"
 
-        @wraps(func)
-        def wrapper(*args, **kwargs):
+        def build_attrs(args, kwargs):
             try:
                 sig = inspect.signature(func)
                 bound = sig.bind_partial(*args, **kwargs)
@@ -110,11 +109,24 @@ def _make_trace_decorator(*, name: Optional[str] = None, whitelist: Optional[Ite
                 if first_key in ("self", "cls"):
                     arg_map.pop(first_key, None)
 
-            attrs = _filter_attrs(arg_map, whitelist, blacklist)
-            with _Trace(name=span_name, attributes=attrs):
-                return func(*args, **kwargs)
+            return _filter_attrs(arg_map, whitelist, blacklist)
 
-        return wrapper
+        if inspect.iscoroutinefunction(func):
+            @wraps(func)
+            async def awrapper(*args, **kwargs):
+                attrs = build_attrs(args, kwargs)
+                async with _Trace(name=span_name, attributes=attrs):
+                    return await func(*args, **kwargs)
+
+            return awrapper
+        else:
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                attrs = build_attrs(args, kwargs)
+                with _Trace(name=span_name, attributes=attrs):
+                    return func(*args, **kwargs)
+
+            return wrapper
 
     return decorator
 
@@ -129,7 +141,7 @@ def trace(func=None, /, *, name: Optional[str] = None, whitelist: Optional[Itera
     - If whitelist is empty or None => all args/attrs allowed.
     - If blacklist is empty or None => nothing is blacklisted.
     """
-    # If used as @trace without parentheses
+    # If used as @trace without parentheses (decorator on function)
     if callable(func):
         return _make_trace_decorator(name=name, whitelist=whitelist, blacklist=blacklist)(func)
 
@@ -139,6 +151,82 @@ def trace(func=None, /, *, name: Optional[str] = None, whitelist: Optional[Itera
 
     # Otherwise, act as context manager using provided attributes
     return _Trace(name=None, attributes=attrs)
+
+
+def _make_instrument_decorator(*, name: Optional[str] = None, skip: Optional[Iterable[str]] = None, fields: Optional[Mapping[str, Any]] = None):
+    skip_set = set(skip or [])
+    fields = dict(fields or {})
+
+    def decorator(func):
+        span_name = name or f"{func.__module__}.{getattr(func, '__qualname__', func.__name__)}"
+
+        def build_attrs(args, kwargs):
+            try:
+                sig = inspect.signature(func)
+                bound = sig.bind_partial(*args, **kwargs)
+                bound.apply_defaults()
+                arg_map = dict(bound.arguments)
+            except Exception:
+                arg_map = {}
+
+            # Drop common receiver parameter names
+            if arg_map:
+                first_key = next(iter(arg_map))
+                if first_key in ("self", "cls"):
+                    arg_map.pop(first_key, None)
+
+            # Apply skip
+            for k in list(arg_map.keys()):
+                if k in skip_set:
+                    arg_map.pop(k, None)
+
+            # Merge constant fields (explicit fields override arg_map)
+            arg_map.update(fields)
+            return arg_map
+
+        if inspect.iscoroutinefunction(func):
+            @wraps(func)
+            async def awrapper(*args, **kwargs):
+                attrs = build_attrs(args, kwargs)
+                async with _Trace(name=span_name, attributes=attrs):
+                    return await func(*args, **kwargs)
+
+            return awrapper
+        else:
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                attrs = build_attrs(args, kwargs)
+                with _Trace(name=span_name, attributes=attrs):
+                    return func(*args, **kwargs)
+
+            return wrapper
+
+    return decorator
+
+
+def instrument(func=None, /, *, name: Optional[str] = None, skip: Optional[Iterable[str]] = None, fields: Optional[Mapping[str, Any]] = None):
+    """Rust-like instrument decorator.
+
+    Usage:
+    - @instrument
+    - @instrument()
+    - @instrument(name="custom", skip=["password"], fields={"component": "db"})
+
+    Works with both sync and async functions.
+    """
+    if callable(func):
+        return _make_instrument_decorator(name=name, skip=skip, fields=fields)(func)
+    return _make_instrument_decorator(name=name, skip=skip, fields=fields)
+
+
+def span(name: str, /, **fields: Any):
+    """Create a Rust-like span context manager.
+
+    Example:
+        with span("http.request", method="GET", path="/users"):
+            ...
+    """
+    return _Trace(name=name, attributes=fields)
 
 
 # noinspection PyUnusedLocal
