@@ -13,10 +13,7 @@ from structlog.typing import FilteringBoundLogger
 from opentelemetry import trace as otel_trace
 from opentelemetry.trace import Span, SpanContext
 
-
 _AnyLogger = FilteringBoundLogger | structlog.stdlib.AsyncBoundLogger | Any
-
-
 
 
 # noinspection PyPep8Naming
