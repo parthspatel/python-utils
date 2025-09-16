@@ -1,6 +1,6 @@
 [project]
 name = "pyutils"
-version = "0.12.7"
+version = "0.13.0"
 description = "Python utilities"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -8,6 +8,8 @@ dependencies = [
     "cloudpickle>=3.1.1",
     "structlog>=25.2.0",
     "opentelemetry-sdk>=1.37.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.37.0",
+    "grpcio>=1.75.0",
     "psutil>=7.0.0",
     "pydantic>=2.11.3",
     "pyyaml>=6.0.2",
@@ -20,9 +22,11 @@ core = [
     "cloudpickle>=3.1.1",
 ]
 logging = [
+    "psutil>=7.0.0",
     "structlog>=25.2.0",
     "opentelemetry-sdk>=1.37.0",
-    "psutil>=7.0.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.37.0",
+    "grpcio>=1.75.0",
 ]
 jpath = [
     "pydantic>=2.11.3",
@@ -46,6 +50,7 @@ dev-dependencies = [
     "uv>=0.6.16",
     "visidata>=3.1.1",
     "gcsfs>=2025.5.1", # for fileapi
+    "logfire>=4.7.0",
 ]
 
 [build-system]
