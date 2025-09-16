@@ -1,6 +1,8 @@
 import logging
 import os
 import sys
+import inspect
+from functools import wraps
 from contextvars import Token
 from typing import Any, Mapping, Dict, Union, Optional, Iterable
 
@@ -21,28 +23,122 @@ def getLogger(*args: Any, **initial_values: Any) -> _AnyLogger:
     return structlog.get_logger(*args, **initial_values)
 
 
+def _to_set(items: Optional[Iterable[str]]) -> Optional[set[str]]:
+    if items is None:
+        return None
+    return set(items)
+
+
+def _filter_attrs(attrs: Mapping[str, Any], whitelist: Optional[Iterable[str]], blacklist: Optional[Iterable[str]]) -> Dict[str, Any]:
+    wl = _to_set(whitelist)
+    bl = _to_set(blacklist)
+
+    # If whitelist is empty/None => allow all keys
+    if not wl:
+        allowed = set(attrs.keys())
+    else:
+        allowed = wl
+
+    # If blacklist is empty/None => block none
+    denied = bl or set()
+
+    keys = (allowed - denied) & set(attrs.keys())
+    return {k: attrs[k] for k in keys}
+
+
 class _Trace:
     tokens: Mapping[str, Token[Any]]
-    kwargs: Dict[str, Any]
+    name: str
+    attributes: Dict[str, Any]
+    kind: Optional[Any]
+    _span_cm: Any
 
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
+    def __init__(self, *, name: Optional[str] = None, attributes: Optional[Mapping[str, Any]] = None, kind: Optional[Any] = None, **kwargs: Any):
+        # kwargs are included as attributes and bound to contextvars
+        self.name = name or "trace"
+        base_attrs: Dict[str, Any] = dict(attributes or {})
+        base_attrs.update(kwargs)
+        self.attributes = base_attrs
+        self.kind = kind
+        self._span_cm = None
 
     def __enter__(self):
-        self.tokens = bind_contextvars(**self.kwargs)
+        # Bind context for structlog
+        self.tokens = bind_contextvars(**self.attributes)
+        # Start OTel span
+        tracer = get_tracer()
+        kw = {}
+        if self.kind is not None:
+            kw["kind"] = self.kind
+        self._span_cm = tracer.start_as_current_span(self.name, attributes=dict(self.attributes), **kw)
+        self._span_cm.__enter__()
+        # Return the active span for convenience
+        return otel_trace.get_current_span()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        unbind_contextvars(*self.tokens)
+        try:
+            if self._span_cm is not None:
+                self._span_cm.__exit__(exc_type, exc_val, exc_tb)
+        finally:
+            # Always unbind context vars
+            unbind_contextvars(*self.tokens)
 
-    def __aenter__(self):
-        self.tokens = bind_contextvars(**self.kwargs)
+    async def __aenter__(self):
+        return self.__enter__()
 
-    def __aexit__(self, exc_type, exc_val, exc_tb):
-        unbind_contextvars(*self.tokens)
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.__exit__(exc_type, exc_val, exc_tb)
 
 
-def trace(**kwargs):
-    return _Trace(**kwargs)
+def _make_trace_decorator(*, name: Optional[str] = None, whitelist: Optional[Iterable[str]] = None, blacklist: Optional[Iterable[str]] = None):
+    def decorator(func):
+        span_name = name or f"{func.__module__}.{getattr(func, '__qualname__', func.__name__)}"
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                sig = inspect.signature(func)
+                bound = sig.bind_partial(*args, **kwargs)
+                bound.apply_defaults()
+                arg_map = dict(bound.arguments)
+            except Exception:
+                arg_map = {}
+
+            # Drop common first parameter names that are not useful as attributes
+            if arg_map:
+                first_key = next(iter(arg_map))
+                if first_key in ("self", "cls"):
+                    arg_map.pop(first_key, None)
+
+            attrs = _filter_attrs(arg_map, whitelist, blacklist)
+            with _Trace(name=span_name, attributes=attrs):
+                return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def trace(func=None, /, *, name: Optional[str] = None, whitelist: Optional[Iterable[str]] = None, blacklist: Optional[Iterable[str]] = None, **attrs: Any):
+    """Tracing utility that supports two forms:
+    - Context manager: with trace(k=v, ...): starts an OTel span (default name "trace") and binds k=v into log context.
+    - Decorator: @trace(whitelist=[...], blacklist=[...]) or @trace: wraps the function, starts a span named after it,
+      and sets span attributes from function arguments filtered by the lists.
+
+    Semantics:
+    - If whitelist is empty or None => all args/attrs allowed.
+    - If blacklist is empty or None => nothing is blacklisted.
+    """
+    # If used as @trace without parentheses
+    if callable(func):
+        return _make_trace_decorator(name=name, whitelist=whitelist, blacklist=blacklist)(func)
+
+    # If decorator parameters are provided (whitelist/blacklist), act as decorator factory
+    if whitelist is not None or blacklist is not None or name is not None:
+        return _make_trace_decorator(name=name, whitelist=whitelist, blacklist=blacklist)
+
+    # Otherwise, act as context manager using provided attributes
+    return _Trace(name=None, attributes=attrs)
 
 
 # noinspection PyUnusedLocal
