@@ -18,7 +18,8 @@ from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.sdk._logs._internal.export import ConsoleLogExporter, LogExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from opentelemetry.trace import set_tracer_provider
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.trace import set_tracer_provider, Span
 from pydantic import BaseModel, Field
 
 from .structlog_exporter import StructlogHandler
@@ -85,7 +86,7 @@ class LoggingConfig(BaseModel):
 
 
 # Global state
-_configured = False
+_pyutils_logging_configured = False
 _tracer_provider: Optional[TracerProvider] = None
 _logger_cache: Dict[str, Any] = {}
 
@@ -116,7 +117,7 @@ def _add_logger_name(logger, method_name, event_dict):
 def _add_trace_context(logger, method_name, event_dict):
     """Add trace and span IDs, span name, and span attributes to event dict for correlation with OpenTelemetry traces."""
     try:
-        current_span = trace.get_current_span()
+        current_span:Span = trace.get_current_span()
         if current_span and current_span.is_recording():
             span_context = current_span.get_span_context()
             if span_context.trace_id != 0:
@@ -196,7 +197,18 @@ def _setup_otel_tracing(config: Optional[OtelConfig]) -> TracerProvider:
         console_processor = BatchSpanProcessor(ConsoleSpanExporter())
         tracer_provider.add_span_processor(console_processor)
 
-    # TODO: Add OTLP span exporter if configured
+    # Add OTLP span exporter if configured
+    if config and config.endpoint:
+        try:
+            otlp_span_exporter = OTLPSpanExporter(
+                endpoint=config.endpoint,
+                headers=config.headers or {},
+                insecure=config.insecure,
+            )
+            tracer_provider.add_span_processor(BatchSpanProcessor(otlp_span_exporter))
+        except Exception:
+            # Do not break logging setup if exporter configuration fails
+            warnings.warn("Failed to configure OTLP span exporter; spans will not be exported via OTLP")
 
     set_tracer_provider(tracer_provider)
     _tracer_provider = tracer_provider
@@ -205,10 +217,10 @@ def _setup_otel_tracing(config: Optional[OtelConfig]) -> TracerProvider:
 
 def configure_logging(config: LoggingConfig) -> None:
     """Configure structlog with OpenTelemetry backend."""
-    global _configured
+    global _pyutils_logging_configured
 
-    if _configured:
-        warnings.warn("Logging already configured, skipping reconfiguration")
+    if _pyutils_logging_configured:
+        warnings.warn("Logging already configured, reconfiguring")
         return
 
     # Set up OpenTelemetry tracing
@@ -274,7 +286,7 @@ def configure_logging(config: LoggingConfig) -> None:
             level=getattr(logging, config.structlog_config.log_level.value),
         )
 
-    _configured = True
+    _pyutils_logging_configured = True
 
 
 def dev_config(
@@ -327,7 +339,7 @@ def prod_config(
 
 def get_logger(name: Optional[str] = None) -> structlog.BoundLogger:
     """Get a structured logger (similar to Rust's tracing)."""
-    if not _configured:
+    if not _pyutils_logging_configured:
         # Auto-configure with dev settings
         configure_logging(dev_config())
 

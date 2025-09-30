@@ -83,9 +83,9 @@ class TestLoggingSetup:
     def setup_method(self):
         """Reset configuration state before each test."""
         # Reset the global configuration state
-        from pyutils.logging.tracing.config import _configured, _logger_cache
+        from pyutils.logging.tracing.config import _pyutils_logging_configured, _logger_cache
         import pyutils.logging.tracing.config as config_module
-        config_module._configured = False
+        config_module._pyutils_logging_configured = False
         config_module._logger_cache.clear()
 
     def test_setup_dev(self):
@@ -226,9 +226,9 @@ class TestOutputFormats:
 
     def setup_method(self):
         """Reset state before each test."""
-        from pyutils.logging.tracing.config import _configured
+        from pyutils.logging.tracing.config import _pyutils_logging_configured
         import pyutils.logging.tracing.config as config_module
-        config_module._configured = False
+        config_module._pyutils_logging_configured = False
         config_module._logger_cache.clear()
 
     def test_pretty_format(self):
@@ -296,9 +296,9 @@ class TestIntegration:
 
     def setup_method(self):
         """Setup for integration tests."""
-        from pyutils.logging.tracing.config import _configured
+        from pyutils.logging.tracing.config import _pyutils_logging_configured
         import pyutils.logging.tracing.config as config_module
-        config_module._configured = False
+        config_module._pyutils_logging_configured = False
         config_module._logger_cache.clear()
 
     def test_complete_workflow(self):
