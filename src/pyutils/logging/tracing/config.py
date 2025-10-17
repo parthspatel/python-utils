@@ -344,15 +344,15 @@ def get_logger(name: Optional[str] = None) -> structlog.BoundLogger:
     #     # Auto-configure with dev settings
     #     configure_logging(dev_config())
 
-    if not _pyutils_logging_configured:
-        if os.getenv("PYUTILS_AUTO_CONFIGURE_LOGGING", "0") == "1":
-            warnings.warn("Auto-configuring logging using dev_config; set PYUTILS_AUTO_CONFIGURE_LOGGING=0 to disable")
-            configure_logging(dev_config())
-        else:
-            raise RuntimeError(
-                "Logging is not configured. Call `configure_logging(...)` or use one of the setup_* helpers "
-                "before calling get_logger(), or set environment variable PYUTILS_AUTO_CONFIGURE_LOGGING=1 to enable auto-configuration."
-            )
+    # if not _pyutils_logging_configured:
+    #     if os.getenv("PYUTILS_AUTO_CONFIGURE_LOGGING", "0") == "1":
+    #         warnings.warn("Auto-configuring logging using dev_config; set PYUTILS_AUTO_CONFIGURE_LOGGING=0 to disable")
+    #         configure_logging(dev_config())
+    #     else:
+    #         raise RuntimeError(
+    #             "Logging is not configured. Call `configure_logging(...)` or use one of the setup_* helpers "
+    #             "before calling get_logger(), or set environment variable PYUTILS_AUTO_CONFIGURE_LOGGING=1 to enable auto-configuration."
+    #         )
 
     if name is None:
         import inspect

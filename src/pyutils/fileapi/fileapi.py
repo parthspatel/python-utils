@@ -572,6 +572,15 @@ class FileAPI:
         """
         return os.path.dirname(self.path_string)
 
+    @property
+    def parent(self) -> "FileAPI":
+        """
+        Get the parent directory as a FileAPI object.
+        :return: The parent directory as a FileAPI object.
+        """
+        path = self.fs._parent(self.path_string)
+        return FileAPI(path, fs=self.fs, resolved_path=path, storage_options=self.storage_options)
+
     def stage_temp_file(self, dest: Optional["FileAPI"] = None) -> "FileAPI":
         """
         Stage the file to a temporary file.
