@@ -324,9 +324,15 @@ class FileAPI:
         >>>     print(_line)
         "Hello, world!"
         """
-        with self.create_input_stream() as source:
-            for line in source:
-                yield line.decode(codec)
+        if self.is_directory():
+            for child in self.list_children_generator():
+                with child.create_input_stream() as source:
+                    for line in source:
+                        yield line.decode(codec)
+        else:
+            with self.create_input_stream() as source:
+                for line in source:
+                    yield line.decode(codec)
 
     def write(self, string: str) -> None:
         """
