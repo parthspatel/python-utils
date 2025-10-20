@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timedelta
 from functools import partial, update_wrapper
 
 import logging
@@ -7,53 +8,63 @@ TIME_DURATION_UNITS = (("week", 60 * 60 * 24 * 7), ("day", 60 * 60 * 24), ("hour
 
 _logger = logging.getLogger(__name__)
 
-def pretty_print_duration(seconds):
-	if seconds == 0:
-		return "inf"
-	parts = []
-	for unit, div in TIME_DURATION_UNITS:
-		amount, seconds = divmod(int(seconds), div)
-		int_amount = int(amount)
-		if int_amount > 0:
-			parts.append(f"{int_amount} {unit}{'' if int_amount == 1 else 's'}")
-	return ", ".join(parts)
+
+def pretty_print_duration(seconds: int | float) -> str:
+    if seconds == 0:
+        return "inf"
+    parts = []
+    for unit, div in TIME_DURATION_UNITS:
+        amount, seconds = divmod(int(seconds), div)
+        int_amount = int(amount)
+        if int_amount > 0:
+            parts.append(f"{int_amount} {unit}{'' if int_amount == 1 else 's'}")
+    return ", ".join(parts)
+
+
+def pretty_print_duration_timedelta(time_delta: timedelta) -> str:
+    return pretty_print_duration(time_delta.total_seconds())
+
+
+def pretty_print_duration_datetime(start_time: datetime, end_time: datetime | None = None) -> str:
+    _end_time = end_time or datetime.now()
+    return pretty_print_duration_timedelta((_end_time - start_time))
 
 
 def default_msg_fx(function_name, duration):
-	return f"Function {function_name!r} executed in {duration}"
+    return f"Function {function_name!r} executed in {duration}"
 
 
 class _TimeMethod:
-	def __init__(self, func, msg_fx=default_msg_fx, log_fx=_logger.info):
-		update_wrapper(self, func)
-		self.func = func
-		self.msg_fx = msg_fx
-		self.log_fx = log_fx
+    def __init__(self, func, msg_fx=default_msg_fx, log_fx=_logger.info):
+        update_wrapper(self, func)
+        self.func = func
+        self.msg_fx = msg_fx
+        self.log_fx = log_fx
 
-	def __get__(self, obj, obj_type):
-		"""Support instance methods."""
-		return partial(self.__call__, obj)
+    def __get__(self, obj, obj_type):
+        """Support instance methods."""
+        return partial(self.__call__, obj)
 
-	def __call__(self, obj, *args, **kwargs):
-		# print('Logic here')
-		start_time = time.perf_counter()
-		result = self.func(obj, *args, **kwargs)
-		end_time = time.perf_counter()
-		msg = self.msg_fx(self.func.__name__, pretty_print_duration(end_time - start_time))
-		self.log_fx(msg)
-		# print(f"Function {func.__name__!r} executed in {pretty_print_duration(end_time - start_time)}")
-		return result
+    def __call__(self, obj, *args, **kwargs):
+        # print('Logic here')
+        start_time = time.perf_counter()
+        result = self.func(obj, *args, **kwargs)
+        end_time = time.perf_counter()
+        msg = self.msg_fx(self.func.__name__, pretty_print_duration(end_time - start_time))
+        self.log_fx(msg)
+        # print(f"Function {func.__name__!r} executed in {pretty_print_duration(end_time - start_time)}")
+        return result
 
 
 # noinspection PyPep8Naming
 def TimeMethod(func=None, msg_fx=default_msg_fx, log_fx=_logger.info):
-	if func:
-		return _TimeMethod(func)
+    if func:
+        return _TimeMethod(func)
 
-	def wrapper(_func):
-		return _TimeMethod(_func, msg_fx, log_fx)
+    def wrapper(_func):
+        return _TimeMethod(_func, msg_fx, log_fx)
 
-	return wrapper
+    return wrapper
 
 
 time_method = TimeMethod
