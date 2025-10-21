@@ -2,6 +2,8 @@ import abc
 import json
 import warnings
 
+import pydantic.config
+
 from .. import logging
 import yaml
 from pydantic import BaseModel as PydanticBaseModel
@@ -27,6 +29,10 @@ class BaseModel(PydanticBaseModel, abc.ABC):
 
     def to_json(self, **kwargs) -> str:
         return json.dumps(self.to_dict(**kwargs))
+
+
+class AnyModel(BaseModel):
+    model_config = pydantic.config.ConfigDict(extra="allow")
 
 
 class DeprecatedModel(BaseModel):
