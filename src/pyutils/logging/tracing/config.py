@@ -56,7 +56,8 @@ class StructlogConfig(BaseModel):
     log_level: LogLevel = Field(default=LogLevel.INFO, description="Log level")
     add_logger_name: bool = Field(default=True, description="Add logger name to output")
     add_log_level: bool = Field(default=True, description="Add log level to output")
-    add_trace_context: bool = Field(default=True, description="Add trace and span IDs and names to logs for correlation")
+    add_trace_context: bool = Field(default=True,
+                                    description="Add trace and span IDs and names to logs for correlation")
     processors: Optional[List[Callable]] = Field(default=None, description="Custom processors")
 
     class Config:
@@ -117,7 +118,7 @@ def _add_logger_name(logger, method_name, event_dict):
 def _add_trace_context(logger, method_name, event_dict):
     """Add trace and span IDs, span name, and span attributes to event dict for correlation with OpenTelemetry traces."""
     try:
-        current_span:Span = trace.get_current_span()
+        current_span: Span = trace.get_current_span()
         if current_span and current_span.is_recording():
             span_context = current_span.get_span_context()
             if span_context.trace_id != 0:
@@ -221,7 +222,6 @@ def configure_logging(config: LoggingConfig) -> None:
 
     if _pyutils_logging_configured:
         warnings.warn("Logging already configured, reconfiguring")
-        return
 
     # Set up OpenTelemetry tracing
     tracer_provider = _setup_otel_tracing(config.otel_config)
@@ -290,9 +290,9 @@ def configure_logging(config: LoggingConfig) -> None:
 
 
 def dev_config(
-    service_name: Optional[str] = None,
-    log_level: LogLevel = LogLevel.DEBUG,
-    output_format: OutputFormat = OutputFormat.PRETTY
+        service_name: Optional[str] = None,
+        log_level: LogLevel = LogLevel.DEBUG,
+        output_format: OutputFormat = OutputFormat.PRETTY
 ) -> LoggingConfig:
     """Create development configuration."""
     return LoggingConfig(
@@ -312,11 +312,11 @@ def dev_config(
 
 
 def prod_config(
-    service_name: str,
-    otlp_endpoint: str,
-    log_level: LogLevel = LogLevel.INFO,
-    output_format: OutputFormat = OutputFormat.JSON,
-    headers: Optional[Dict[str, str]] = None
+        service_name: str,
+        otlp_endpoint: str,
+        log_level: LogLevel = LogLevel.INFO,
+        output_format: OutputFormat = OutputFormat.JSON,
+        headers: Optional[Dict[str, str]] = None
 ) -> LoggingConfig:
     """Create production configuration."""
     return LoggingConfig(
@@ -395,6 +395,7 @@ def span(name: str, **attributes):
 
 def instrument(func: Optional[Callable] = None, *, name: Optional[str] = None, **attributes):
     """Decorator to instrument a function with tracing (similar to Rust's tracing)."""
+
     def decorator(f: Callable) -> Callable:
         span_name = name or f"{f.__module__}.{f.__qualname__}"
 
